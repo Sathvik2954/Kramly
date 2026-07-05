@@ -1,0 +1,11 @@
+from_skill_id,to_skill_id,strength,source
+DO001,DO004,strict,manual
+DO001,DO005,strict,manual
+DO002,DO009,strict,manual
+DO002,DO007,soft,manual
+DO003,DO006,strict,manual
+DO004,DO006,strict,manual
+DO004,DO007,strict,manual
+DO005,DO008,strict,manual
+DO006,DO010,soft,manual
+DO009,DO010,soft,manual

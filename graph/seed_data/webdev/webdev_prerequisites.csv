@@ -1,0 +1,12 @@
+from_skill_id,to_skill_id,strength,source
+WEB001,WEB002,strict,manual
+WEB001,WEB004,strict,manual
+WEB002,WEB005,strict,manual
+WEB003,WEB004,strict,manual
+WEB003,WEB007,soft,manual
+WEB004,WEB006,strict,manual
+WEB005,WEB006,soft,manual
+WEB007,WEB008,strict,manual
+WEB008,WEB009,strict,manual
+WEB006,WEB010,strict,manual
+WEB008,WEB010,strict,manual

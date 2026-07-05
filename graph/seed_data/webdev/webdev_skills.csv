@@ -1,0 +1,11 @@
+id,name,domain,difficulty_level
+WEB001,HTML Fundamentals,WebDev,beginner
+WEB002,CSS Fundamentals,WebDev,beginner
+WEB003,JavaScript Basics,WebDev,beginner
+WEB004,DOM Manipulation,WebDev,intermediate
+WEB005,Responsive Design,WebDev,intermediate
+WEB006,Frontend Framework (e.g. React),WebDev,intermediate
+WEB007,HTTP and REST Basics,WebDev,intermediate
+WEB008,Backend Basics (Node/Express or equivalent),WebDev,intermediate
+WEB009,Databases for Web (SQL/NoSQL basics),WebDev,intermediate
+WEB010,Full-Stack Integration,WebDev,advanced

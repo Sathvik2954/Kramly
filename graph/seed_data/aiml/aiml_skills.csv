@@ -1,0 +1,11 @@
+id,name,domain,difficulty_level
+AI001,Mathematics for ML (Linear Algebra/Calculus/Probability),AIML,beginner
+AI002,Python for Data Science,AIML,beginner
+AI003,Statistics Fundamentals,AIML,beginner
+AI004,Data Wrangling and Visualization,AIML,intermediate
+AI005,Classical Machine Learning (regression/classification),AIML,intermediate
+AI006,Model Evaluation and Validation,AIML,intermediate
+AI007,Feature Engineering,AIML,intermediate
+AI008,Neural Networks Basics,AIML,intermediate
+AI009,Deep Learning (CNNs/RNNs),AIML,advanced
+AI010,MLOps Basics (model deployment),AIML,advanced

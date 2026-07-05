@@ -1,0 +1,11 @@
+id,name,domain,difficulty_level
+DO001,Linux Command Line Basics,DevOps,beginner
+DO002,Networking Fundamentals,DevOps,beginner
+DO003,Version Control Advanced Workflows (Git),DevOps,intermediate
+DO004,Scripting (Bash/Python),DevOps,intermediate
+DO005,Containers (Docker),DevOps,intermediate
+DO006,CI/CD Concepts,DevOps,intermediate
+DO007,Infrastructure as Code (e.g. Terraform),DevOps,advanced
+DO008,Container Orchestration (Kubernetes),DevOps,advanced
+DO009,Cloud Fundamentals (AWS/Azure/GCP),DevOps,intermediate
+DO010,Monitoring and Logging,DevOps,advanced

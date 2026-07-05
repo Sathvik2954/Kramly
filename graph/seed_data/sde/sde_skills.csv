@@ -1,0 +1,11 @@
+id,name,domain,difficulty_level
+SDE001,OOP Advanced (inheritance/polymorphism/interfaces),SDE,intermediate
+SDE002,Data Structures (stacks/queues/trees/graphs),SDE,intermediate
+SDE003,Algorithm Complexity (Big-O),SDE,intermediate
+SDE004,Design Patterns,SDE,intermediate
+SDE005,Unit Testing,SDE,intermediate
+SDE006,Software Architecture Basics,SDE,advanced
+SDE007,System Design Fundamentals,SDE,advanced
+SDE008,Database Fundamentals (SQL),SDE,beginner
+SDE009,API Design (REST basics),SDE,intermediate
+SDE010,Code Review and Collaboration,SDE,intermediate
