@@ -69,6 +69,8 @@ async def lifespan(app: FastAPI):
     logger.info("Kramly backend stopped.")
 
 
+from fastapi.middleware.cors import CORSMiddleware
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
@@ -82,6 +84,15 @@ app = FastAPI(
     ),
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Enable CORS for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(router)

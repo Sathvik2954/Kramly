@@ -29,6 +29,12 @@ from pydantic import BaseModel, Field
 class LearningPathRequest(BaseModel):
     """Request body for the ``POST /learning-path`` endpoint."""
 
+    learner_id: str = Field(
+        ...,
+        min_length=1,
+        description="The unique identifier of the learner.",
+        examples=["learner_001"],
+    )
     known_skills: list[str] = Field(
         default_factory=list,
         description="Skill IDs the learner already knows. May be empty.",
@@ -51,3 +57,17 @@ class LearningPathRequest(BaseModel):
             ]
         }
     }
+
+
+class TargetSkillRequest(BaseModel):
+    """Request body for setting a learner's target skill."""
+
+    target_skill: str = Field(..., min_length=1, description="The skill ID the learner wants to reach.")
+    deadline: str | None = Field(default=None, description="Optional deadline timestamp or date.")
+
+
+class EvidenceRequest(BaseModel):
+    """Request body for recording/updating evidence of a learner's skill mastery."""
+
+    skill_id: str = Field(..., min_length=1, description="The ID of the skill.")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="The level of mastery confidence from 0.0 to 1.0.")

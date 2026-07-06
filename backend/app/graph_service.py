@@ -280,3 +280,29 @@ def get_prerequisite_edges(
         len(edges), len(skill_ids),
     )
     return edges
+
+
+def get_graph_visualization_data(*, driver: Optional[Driver] = None) -> dict:
+    """Fetch all skills and all prerequisite edges for graph visualization.
+
+    Returns
+    -------
+    dict
+        ``{"nodes": list[dict], "links": list[dict]}``
+    """
+    nodes_query = """
+    MATCH (s:Skill)
+    RETURN s.id AS id, s.name AS name, s.domain AS domain
+    """
+    links_query = """
+    MATCH (a:Skill)-[:PREREQUISITE_OF]->(b:Skill)
+    RETURN a.id AS source, b.id AS target
+    """
+    with _get_session(driver) as session:
+        nodes = session.execute_read(
+            lambda tx: [dict(r) for r in tx.run(nodes_query)]
+        )
+        links = session.execute_read(
+            lambda tx: [dict(r) for r in tx.run(links_query)]
+        )
+    return {"nodes": nodes, "links": links}

@@ -1,6 +1,6 @@
 id,name,domain,difficulty_level
 C001,Variables and Data Types,Coding,beginner
-C002,Control Flow (if/else, loops),Coding,beginner
+C002,"Control Flow (if/else, loops)",Coding,beginner
 C003,Functions and Scope,Coding,beginner
 C004,Basic Data Structures (arrays/strings),Coding,beginner
 C005,Recursion,Coding,intermediate
