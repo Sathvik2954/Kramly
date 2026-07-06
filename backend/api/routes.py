@@ -42,8 +42,12 @@ from models.request import LearningPathRequest, TargetSkillRequest, EvidenceRequ
 from models.response import ErrorResponse, LearningPathResponse
 from optimizer.exceptions import CycleDetected, NoLearningPath, SkillNotFound
 from optimizer.planner import generate_learning_path
-from app.knowledge_state import set_target_skill, record_evidence
+from app.knowledge_state import set_target_skill, record_evidence, get_learner_target_skill, get_learner_known_skills
 from app.database import get_driver
+
+from agent.event_types import QuizCompleted, DeadlineChanged, TargetChanged, ManualReplanRequested
+from agent.replanner import replan_learning_path
+from agent.decision_logger import log_decision
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +82,10 @@ DECISION_LOGS: dict[str, list[dict]] = {}
 async def create_learning_path(
     request: LearningPathRequest,
 ) -> LearningPathResponse:
-    """Compute and return a learning path.
+    """Compute and return a learning path using the agent replanner.
 
-    This handler wires the planner to the real graph service and
-    translates domain exceptions into HTTP responses.
+    This handler wires the replanner with target and manual replan events,
+    generating a delta path and structured log entry.
     """
     logger.info(
         "POST /learning-path  learner_id='%s' known_skills=%s  target_skill='%s'",
@@ -91,22 +95,43 @@ async def create_learning_path(
     )
 
     try:
-        path = generate_learning_path(
+        # Determine previous path (if any) from decision logs
+        previous_path = []
+        history = DECISION_LOGS.get(request.learner_id, [])
+        if history:
+            latest_entry = history[-1]
+            previous_path = latest_entry.get("new_path", [])
+
+        # Create ManualReplanRequested event
+        event = ManualReplanRequested(
+            learner_id=request.learner_id,
+            reason="User requested path calculation"
+        )
+
+        import time
+        start_time = time.perf_counter()
+
+        # Call replanner
+        result = replan_learning_path(
             known_skills=request.known_skills,
             target_skill=request.target_skill,
-            # --- Dependency injection bridge ---
+            current_path=previous_path,
+            event=event,
             fetch_skill=graph_service.get_skill,
             fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
             fetch_prereq_edges=graph_service.get_prerequisite_edges,
         )
 
-        # Log this decision to the in-memory store
-        entry = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "trigger": "manual_request",
-            "summary": f"Calculated path of {len(path)} steps to '{request.target_skill}'."
-        }
-        DECISION_LOGS.setdefault(request.learner_id, []).append(entry)
+        execution_time_ms = (time.perf_counter() - start_time) * 1000.0
+
+        if result:
+            # Log decision and get structured entry
+            log_entry = log_decision(event, result, execution_time_ms)
+            # Save to in-memory decision logs
+            DECISION_LOGS.setdefault(request.learner_id, []).append(log_entry.model_dump())
+            path = result.new_path
+        else:
+            path = previous_path
 
     except SkillNotFound as exc:
         logger.warning("Skill not found: %s", exc.skill_id)
@@ -168,14 +193,50 @@ async def update_target_skill(learner_id: str, request: TargetSkillRequest):
         
         with driver.session() as session:
             session.execute_write(set_target_skill, learner_id, request.target_skill, request.deadline)
+            # Fetch known skills for this learner
+            known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
         
-        # Log this trigger in decision logs
-        entry = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "trigger": "target_skill_changed",
-            "summary": f"Learner target skill updated to '{request.target_skill}'."
-        }
-        DECISION_LOGS.setdefault(learner_id, []).append(entry)
+        known_skills = [s["skill_id"] for s in known_skills_data]
+
+        # Determine previous path (if any)
+        previous_path = []
+        history = DECISION_LOGS.get(learner_id, [])
+        if history:
+            latest_entry = history[-1]
+            previous_path = latest_entry.get("new_path", [])
+
+        # Create TargetChanged or DeadlineChanged event
+        if request.deadline:
+            event = DeadlineChanged(
+                learner_id=learner_id,
+                target_skill_id=request.target_skill,
+                new_deadline=request.deadline
+            )
+        else:
+            event = TargetChanged(
+                learner_id=learner_id,
+                new_target_skill_id=request.target_skill
+            )
+
+        import time
+        start_time = time.perf_counter()
+
+        # Call replanner
+        result = replan_learning_path(
+            known_skills=known_skills,
+            target_skill=request.target_skill,
+            current_path=previous_path,
+            event=event,
+            fetch_skill=graph_service.get_skill,
+            fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
+            fetch_prereq_edges=graph_service.get_prerequisite_edges,
+        )
+
+        execution_time_ms = (time.perf_counter() - start_time) * 1000.0
+
+        if result:
+            log_entry = log_decision(event, result, execution_time_ms)
+            DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
 
         return {"status": "success", "message": f"Target skill set to '{request.target_skill}' for learner '{learner_id}'"}
     except HTTPException:
@@ -200,14 +261,49 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
             
         with driver.session() as session:
             session.execute_write(record_evidence, learner_id, request.skill_id, request.confidence)
+            # Fetch learner's current target skill and deadline
+            target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
+            # Fetch all known skills for this learner
+            known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+        
+        known_skills = [s["skill_id"] for s in known_skills_data]
 
-        # Log this trigger in decision logs
-        entry = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "trigger": "evidence_recorded",
-            "summary": f"Recorded evidence for '{request.skill_id}' with confidence {request.confidence}."
-        }
-        DECISION_LOGS.setdefault(learner_id, []).append(entry)
+        if target_skill_id:
+            # Determine previous path (if any)
+            previous_path = []
+            history = DECISION_LOGS.get(learner_id, [])
+            if history:
+                latest_entry = history[-1]
+                previous_path = latest_entry.get("new_path", [])
+
+            # Create QuizCompleted event
+            passed = request.confidence >= 0.70
+            event = QuizCompleted(
+                learner_id=learner_id,
+                skill_id=request.skill_id,
+                passed=passed,
+                confidence=request.confidence
+            )
+
+            import time
+            start_time = time.perf_counter()
+
+            # Call replanner
+            result = replan_learning_path(
+                known_skills=known_skills,
+                target_skill=target_skill_id,
+                current_path=previous_path,
+                event=event,
+                fetch_skill=graph_service.get_skill,
+                fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
+                fetch_prereq_edges=graph_service.get_prerequisite_edges,
+            )
+
+            execution_time_ms = (time.perf_counter() - start_time) * 1000.0
+
+            if result:
+                log_entry = log_decision(event, result, execution_time_ms)
+                DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
 
         return {"status": "success", "message": f"Recorded evidence for skill '{request.skill_id}' for learner '{learner_id}'"}
     except HTTPException:

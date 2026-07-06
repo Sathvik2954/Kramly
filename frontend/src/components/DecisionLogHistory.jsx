@@ -49,16 +49,64 @@ export default function DecisionLogHistory({ learnerId }) {
         Audit Trail for "{learnerId}"
       </h3>
       <ul className="timeline">
-        {entries.map((entry, idx) => (
-          <li key={idx} className="timeline-item">
-            <span className="timeline-marker"></span>
-            <span className="timeline-time">
-              {entry.timestamp}
-              <span className="timeline-trigger">{entry.trigger}</span>
-            </span>
-            <div className="timeline-text">{entry.summary}</div>
-          </li>
-        ))}
+        {entries.map((entry, idx) => {
+          const trigger = entry.event_type || entry.trigger || "Unknown";
+          const summary = entry.reason || entry.summary || "";
+          
+          // Format ISO timestamp or fallback to raw string
+          let formattedTime = entry.timestamp;
+          try {
+            if (entry.timestamp.includes("T")) {
+              formattedTime = new Date(entry.timestamp).toLocaleString();
+            }
+          } catch (e) {
+            // use fallback
+          }
+
+          const hasDeltas = (entry.added_skills && entry.added_skills.length > 0) || 
+                            (entry.removed_skills && entry.removed_skills.length > 0);
+
+          return (
+            <li key={idx} className="timeline-item">
+              <span className="timeline-marker"></span>
+              <span className="timeline-time">
+                {formattedTime}
+                <span className="timeline-trigger">{trigger}</span>
+              </span>
+              <div className="timeline-text">{summary}</div>
+              
+              {hasDeltas && (
+                <div style={{ 
+                  marginTop: "0.5rem", 
+                  fontSize: "0.8rem", 
+                  color: "var(--text-muted)", 
+                  display: "flex", 
+                  flexDirection: "column",
+                  gap: "0.25rem" 
+                }}>
+                  {entry.added_skills && entry.added_skills.length > 0 && (
+                    <div>
+                      <span style={{ color: "var(--accent-success)", fontWeight: 500 }}>+ Added:</span>{" "}
+                      <code style={{ fontFamily: "var(--font-mono)" }}>{entry.added_skills.join(", ")}</code>
+                    </div>
+                  )}
+                  {entry.removed_skills && entry.removed_skills.length > 0 && (
+                    <div>
+                      <span style={{ color: "var(--accent-error)", fontWeight: 500 }}>- Removed:</span>{" "}
+                      <code style={{ fontFamily: "var(--font-mono)" }}>{entry.removed_skills.join(", ")}</code>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {entry.execution_time_ms !== undefined && (
+                <div style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                  Resolved in {Number(entry.execution_time_ms).toFixed(1)}ms
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

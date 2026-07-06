@@ -74,3 +74,18 @@ def set_target_skill(tx, learner_id: str, target_skill_id: str, deadline: str = 
         l.deadline = $deadline
     """
     tx.run(query, learner_id=learner_id, target_skill_id=target_skill_id, deadline=deadline)
+
+
+def get_learner_target_skill(tx, learner_id: str) -> tuple[str | None, str | None]:
+    """
+    Retrieves the learner's current target skill and deadline from the Learner node.
+    """
+    query = """
+    MATCH (l:Learner {id: $learner_id})
+    RETURN l.target_skill AS target_skill, l.deadline AS deadline
+    """
+    result = tx.run(query, learner_id=learner_id)
+    record = result.single()
+    if record:
+        return record["target_skill"], record["deadline"]
+    return None, None
