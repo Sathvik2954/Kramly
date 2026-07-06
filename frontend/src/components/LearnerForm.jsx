@@ -23,41 +23,38 @@ export default function LearnerForm({ onSubmit, loading }) {
   return (
     <form onSubmit={handleSubmit} className="form-container">
       <div className="input-group">
-        <label>
-          Learner ID
-          <input
-            type="text"
-            value={learnerId}
-            onChange={(e) => setLearnerId(e.target.value)}
-            placeholder="e.g. learner_001"
-            required
-          />
-        </label>
+        <label htmlFor="form-learner-id">Learner ID</label>
+        <input
+          id="form-learner-id"
+          type="text"
+          value={learnerId}
+          onChange={(e) => setLearnerId(e.target.value)}
+          placeholder="e.g. learner_001"
+          required
+        />
       </div>
 
       <div className="input-group">
-        <label>
-          Known Skills (comma-separated skill IDs)
-          <input
-            type="text"
-            value={knownSkillsInput}
-            onChange={(e) => setKnownSkillsInput(e.target.value)}
-            placeholder="e.g. C001, C002, WEB001"
-          />
-        </label>
+        <label htmlFor="form-known-skills">Known Skills (comma-separated skill IDs)</label>
+        <input
+          id="form-known-skills"
+          type="text"
+          value={knownSkillsInput}
+          onChange={(e) => setKnownSkillsInput(e.target.value)}
+          placeholder="e.g. C001, C002, WEB001"
+        />
       </div>
 
       <div className="input-group">
-        <label>
-          Target Skill (skill ID)
-          <input
-            type="text"
-            value={targetSkill}
-            onChange={(e) => setTargetSkill(e.target.value)}
-            placeholder="e.g. WEB010"
-            required
-          />
-        </label>
+        <label htmlFor="form-target-skill">Target Skill (skill ID)</label>
+        <input
+          id="form-target-skill"
+          type="text"
+          value={targetSkill}
+          onChange={(e) => setTargetSkill(e.target.value)}
+          placeholder="e.g. WEB010"
+          required
+        />
       </div>
 
       <button type="submit" disabled={loading}>

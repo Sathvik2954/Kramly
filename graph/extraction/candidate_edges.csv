@@ -1,0 +1,7 @@
+from_skill,to_skill,confidence,source_snippet
+Programming Fundamentals,Kotlin,0.90,Before writing any mobile-specific code developers should already understand general programming fundamentals
+Kotlin,Jetpack Compose,0.85,Jetpack Compose for Android... which requires a working knowledge of the core language first
+Jetpack Compose,State Management,0.80,After UI basics developers typically learn state management patterns which builds on UI toolkit knowledge
+HTTP Concepts,Networking,0.75,Networking... requires basic understanding of HTTP concepts
+Networking,Local Data Persistence,0.70,Local data persistence... is typically introduced after networking since many apps cache network data locally
+State Management,Publishing an App,0.65,Finally publishing an app to an app store is the last step requiring state management

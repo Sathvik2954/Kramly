@@ -12,6 +12,7 @@ neo4j==6.2.0
 
 # --- Utilities ---
 python-dotenv==1.0.1
+ollama>=0.2.0
 
 # --- Testing (dev only) ---
 pytest==9.1.1

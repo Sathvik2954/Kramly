@@ -6,7 +6,7 @@
   --border-focus: #10b981;
   --text-primary: #f4fbf7;
   --text-secondary: #a7bfb0;
-  --text-muted: #526659;
+  --text-muted: #809c89;
   
   --accent-primary: #10b981;
   --accent-primary-hover: #059669;
@@ -113,6 +113,11 @@ button:hover:not(:disabled) {
   background-color: var(--accent-primary-hover);
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);
+}
+
+button:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
 }
 
 button:active:not(:disabled) {

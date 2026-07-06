@@ -60,3 +60,48 @@ export async function fetchSkillGraph(domain) {
   }
   return response.json();
 }
+
+export async function fetchLearnerState(learnerId) {
+  const response = await fetch(`${API_BASE_URL}/learner/${learnerId}`);
+  if (!response.ok) {
+    if (response.status === 404) return null;
+    throw new Error(`Learner state fetch failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function recordLearnerEvidence(learnerId, { skillId, confidence }) {
+  const response = await fetch(`${API_BASE_URL}/learner/${learnerId}/evidence`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      skill_id: skillId,
+      confidence: parseFloat(confidence),
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || errorBody.message || `Failed to record evidence: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function setLearnerTarget(learnerId, { targetSkill, deadline }) {
+  const response = await fetch(`${API_BASE_URL}/learner/${learnerId}/target`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      target_skill: targetSkill,
+      deadline: deadline || null,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || errorBody.message || `Failed to set target: ${response.status}`);
+  }
+
+  return response.json();
+}

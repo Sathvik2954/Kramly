@@ -178,6 +178,30 @@ async def get_graph():
         ) from exc
 
 
+@router.get(
+    "/learner/{learner_id}",
+    summary="Get current knowledge and target state for a learner",
+)
+async def get_learner_state(learner_id: str):
+    """Retrieve target skill, deadline, and list of known skills for a learner."""
+    driver = get_driver()
+    try:
+        with driver.session() as session:
+            target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
+            known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+        
+        return {
+            "learner_id": learner_id,
+            "target_skill": target_skill_id,
+            "deadline": deadline,
+            "known_skills": [s["skill_id"] for s in known_skills_data],
+            "known_skills_detailed": known_skills_data
+        }
+    except Exception as exc:
+        logger.exception("Failed to fetch learner state")
+        raise HTTPException(status_code=500, detail="Internal server error while fetching learner state.") from exc
+
+
 @router.post(
     "/learner/{learner_id}/target",
     summary="Set target skill for a learner",

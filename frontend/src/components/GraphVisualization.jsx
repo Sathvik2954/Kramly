@@ -15,22 +15,7 @@ import { fetchSkillGraph } from "../api/client";
  * — this is react-force-graph's expected input shape as I understand it,
  * not confirmed against the current docs by me directly.
  */
-export default function GraphVisualization({ domain }) {
-  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
-  const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetchSkillGraph(domain)
-      .then((data) => {
-        setGraphData(data);
-        setError(null);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [domain]);
-
+export default function GraphVisualization({ graphData, error, loading }) {
   if (error) {
     return (
       <div className="graph-empty-state">
