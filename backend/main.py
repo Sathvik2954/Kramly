@@ -34,6 +34,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from api.routes import router
+from api.review_routes import router as review_router
 from app.database import close_driver, init_driver
 
 # ---------------------------------------------------------------------------
@@ -96,3 +97,4 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(review_router)
