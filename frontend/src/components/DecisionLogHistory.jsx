@@ -3,12 +3,9 @@ import { fetchDecisionLogHistory } from "../api/client";
 
 /**
  * DecisionLogHistory.jsx
- * Shows past re-planning decisions: what changed and why (Phase 2.4,
- * Person B's logging work).
- *
- * NOTE: the /decision-log/{learnerId} endpoint does not exist in your
- * backend yet per project_structure.md. This component will show the
- * error state until Person B adds it.
+ * Shows past re-planning decisions: what changed and why.
+ * Calls GET /decision-log/{learnerId} — returns DecisionLogEntry[] from the
+ * in-memory DECISION_LOGS store in routes.py.
  */
 export default function DecisionLogHistory({ learnerId }) {
   const [entries, setEntries] = useState([]);

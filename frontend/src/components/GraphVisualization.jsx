@@ -5,15 +5,9 @@ import { fetchSkillGraph } from "../api/client";
 /**
  * GraphVisualization.jsx
  *
- * VERIFY BEFORE RELYING ON THIS: I am not fully certain of the current
- * exact prop names/API for react-force-graph-2d, since library APIs
- * change across versions. Check the package's current README/docs
- * (npm or its GitHub repo) before assuming `nodeLabel`, `linkDirectionalArrowLength`,
- * etc. below are still accurate for whatever version actually installs.
- *
- * Expects graphData in the shape: { nodes: [{id, name}], links: [{source, target}] }
- * — this is react-force-graph's expected input shape as I understand it,
- * not confirmed against the current docs by me directly.
+ * Renders the full skill dependency graph using react-force-graph-2d.
+ * Expects graphData: { nodes: [{id, name, domain}], links: [{source, target}] }
+ * — this matches the shape returned by GET /graph in routes.py.
  */
 export default function GraphVisualization({ graphData, error, loading }) {
   if (error) {

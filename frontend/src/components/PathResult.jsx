@@ -2,9 +2,8 @@
  * PathResult.jsx
  * Displays the ordered learning path returned by the backend.
  *
- * ASSUMPTION FLAG: expects `path` to be an array of skill IDs (or objects
- * with an `id`/`name`) — actual shape not confirmed against your real
- * response.py model. Adjust the rendering below once confirmed.
+ * Response shape (confirmed against models/response.py):
+ *   { path: string[] }  — ordered list of skill IDs, empty if already known.
  */
 export default function PathResult({ path, error, graphData }) {
   if (error) {

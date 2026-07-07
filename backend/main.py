@@ -32,6 +32,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from api.review_routes import router as review_router
@@ -69,8 +70,6 @@ async def lifespan(app: FastAPI):
     close_driver()
     logger.info("Kramly backend stopped.")
 
-
-from fastapi.middleware.cors import CORSMiddleware
 
 # ---------------------------------------------------------------------------
 # FastAPI app

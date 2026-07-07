@@ -34,6 +34,8 @@ Design decisions
 """
 
 import logging
+import time
+import datetime
 
 from fastapi import APIRouter, HTTPException
 
@@ -52,9 +54,6 @@ from agent.decision_logger import log_decision
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-import datetime
 
 # In-memory store for decision logs keyed by learner_id (Phase 2 feature)
 DECISION_LOGS: dict[str, list[dict]] = {}
@@ -108,7 +107,6 @@ async def create_learning_path(
             reason="User requested path calculation"
         )
 
-        import time
         start_time = time.perf_counter()
 
         # Call replanner
@@ -242,7 +240,6 @@ async def update_target_skill(learner_id: str, request: TargetSkillRequest):
                 new_target_skill_id=request.target_skill
             )
 
-        import time
         start_time = time.perf_counter()
 
         # Call replanner
@@ -309,7 +306,6 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
                 confidence=request.confidence
             )
 
-            import time
             start_time = time.perf_counter()
 
             # Call replanner

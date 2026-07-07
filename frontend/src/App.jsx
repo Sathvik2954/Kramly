@@ -47,7 +47,7 @@ export default function App() {
           knownSkills: state.known_skills || [],
           targetSkill: state.target_skill,
         });
-        setPath(result.ordered_path || result.path || []);
+        setPath(result.path || []);
       } else {
         setPath(null);
       }
@@ -65,7 +65,7 @@ export default function App() {
     setCurrentLearnerId(learnerId);
     try {
       const result = await fetchLearningPath({ learnerId, knownSkills, targetSkill });
-      setPath(result.ordered_path || result.path || []);
+      setPath(result.path || []);
     } catch (e) {
       setError(e.message);
       setPath(null);
