@@ -47,9 +47,12 @@ from optimizer.planner import generate_learning_path
 from app.knowledge_state import set_target_skill, record_evidence, get_learner_target_skill, get_learner_known_skills
 from app.database import get_driver
 
-from agent.event_types import QuizCompleted, DeadlineChanged, TargetChanged, ManualReplanRequested
+from agent.event_types import QuizCompleted, DeadlineChanged, TargetChanged, ManualReplanRequested, SkillForgotten
 from agent.replanner import replan_learning_path
 from agent.decision_logger import log_decision
+
+from app.decay_scanner import scan_for_decayed_skills, _parse_timestamp
+from optimizer.decay import has_crossed_decay_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,21 @@ router = APIRouter()
 
 # In-memory store for decision logs keyed by learner_id (Phase 2 feature)
 DECISION_LOGS: dict[str, list[dict]] = {}
+
+def _filter_active_skills(known_skills_data: list[dict], now: datetime.datetime = None) -> list[str]:
+    """Filters out skills that have crossed the decay threshold."""
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    active = []
+    for s in known_skills_data:
+        try:
+            last_practiced = _parse_timestamp(s["last_practiced"])
+            confidence = float(s["confidence"])
+            if not has_crossed_decay_threshold(confidence, last_practiced, now=now):
+                active.append(s["skill_id"])
+        except Exception:
+            active.append(s["skill_id"])
+    return active
 
 @router.post(
     "/learning-path",
@@ -188,12 +206,17 @@ async def get_learner_state(learner_id: str):
             target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
             known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
         
+        active_skills = _filter_active_skills(known_skills_data)
+        all_skills = [s["skill_id"] for s in known_skills_data]
+        decayed_skills = list(set(all_skills) - set(active_skills))
+
         return {
             "learner_id": learner_id,
             "target_skill": target_skill_id,
             "deadline": deadline,
-            "known_skills": [s["skill_id"] for s in known_skills_data],
-            "known_skills_detailed": known_skills_data
+            "known_skills": active_skills,
+            "known_skills_detailed": known_skills_data,
+            "decayed_skills": decayed_skills
         }
     except Exception as exc:
         logger.exception("Failed to fetch learner state")
@@ -218,7 +241,7 @@ async def update_target_skill(learner_id: str, request: TargetSkillRequest):
             # Fetch known skills for this learner
             known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
         
-        known_skills = [s["skill_id"] for s in known_skills_data]
+        known_skills = _filter_active_skills(known_skills_data)
 
         # Determine previous path (if any)
         previous_path = []
@@ -287,7 +310,7 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
             # Fetch all known skills for this learner
             known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
         
-        known_skills = [s["skill_id"] for s in known_skills_data]
+        known_skills = _filter_active_skills(known_skills_data)
 
         if target_skill_id:
             # Determine previous path (if any)
@@ -331,3 +354,81 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
     except Exception as exc:
         logger.exception("Failed to record evidence")
         raise HTTPException(status_code=500, detail="Internal server error while recording evidence.") from exc
+
+
+@router.post(
+    "/decay-scan",
+    summary="Scan all learners for decayed skills and trigger replanning",
+)
+async def trigger_decay_scan():
+    """Scans all learners' skills for decay, triggers SkillForgotten events, and replans."""
+    driver = get_driver()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        with driver.session() as session:
+            # 1. Run the scan to detect decayed skills
+            flagged_decays = session.execute_read(scan_for_decayed_skills, now=now)
+            
+            replans_triggered = 0
+            
+            # Group decays by learner_id so we only replan once per learner if they have multiple decayed skills
+            from collections import defaultdict
+            decays_by_learner = defaultdict(list)
+            for decay in flagged_decays:
+                decays_by_learner[decay["learner_id"]].append(decay)
+                
+            for learner_id, decays in decays_by_learner.items():
+                # Fetch learner state
+                target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
+                if not target_skill_id:
+                    continue
+                    
+                known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+                # Filter out all decayed skills to get the active known skills
+                active_known_skills = _filter_active_skills(known_skills_data, now=now)
+                
+                # Trigger a SkillForgotten event for the first decayed skill
+                first_decay = decays[0]
+                event = SkillForgotten(
+                    learner_id=learner_id,
+                    skill_id=first_decay["skill_id"],
+                    confidence_drop=first_decay["base_confidence"] - first_decay["decayed_confidence"]
+                )
+                
+                # Determine previous path from decision logs
+                previous_path = []
+                history = DECISION_LOGS.get(learner_id, [])
+                if history:
+                    latest_entry = history[-1]
+                    previous_path = latest_entry.get("new_path", [])
+                    
+                start_time = time.perf_counter()
+                
+                # Call replanner
+                result = replan_learning_path(
+                    known_skills=active_known_skills,
+                    target_skill=target_skill_id,
+                    current_path=previous_path,
+                    event=event,
+                    fetch_skill=graph_service.get_skill,
+                    fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
+                    fetch_prereq_edges=graph_service.get_prerequisite_edges,
+                )
+                
+                execution_time_ms = (time.perf_counter() - start_time) * 1000.0
+                
+                if result:
+                    log_entry = log_decision(event, result, execution_time_ms)
+                    DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
+                    replans_triggered += 1
+                    
+        return {
+            "status": "success",
+            "decays_detected": len(flagged_decays),
+            "replans_triggered": replans_triggered,
+            "details": flagged_decays
+        }
+    except Exception as exc:
+        logger.exception("Failed to run decay scan")
+        raise HTTPException(status_code=500, detail=str(exc))
+

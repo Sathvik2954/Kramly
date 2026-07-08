@@ -11,6 +11,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [currentLearnerId, setCurrentLearnerId] = useState("");
+  const [decayedSkills, setDecayedSkills] = useState([]);
 
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [graphError, setGraphError] = useState(null);
@@ -41,19 +42,26 @@ export default function App() {
     setError(null);
     try {
       const state = await fetchLearnerState(currentLearnerId);
-      if (state && state.target_skill) {
-        const result = await fetchLearningPath({
-          learnerId: currentLearnerId,
-          knownSkills: state.known_skills || [],
-          targetSkill: state.target_skill,
-        });
-        setPath(result.path || []);
+      if (state) {
+        setDecayedSkills(state.decayed_skills || []);
+        if (state.target_skill) {
+          const result = await fetchLearningPath({
+            learnerId: currentLearnerId,
+            knownSkills: state.known_skills || [],
+            targetSkill: state.target_skill,
+          });
+          setPath(result.path || []);
+        } else {
+          setPath(null);
+        }
       } else {
+        setDecayedSkills([]);
         setPath(null);
       }
     } catch (e) {
       setError(e.message);
       setPath(null);
+      setDecayedSkills([]);
     } finally {
       setLoading(false);
     }
@@ -66,9 +74,17 @@ export default function App() {
     try {
       const result = await fetchLearningPath({ learnerId, knownSkills, targetSkill });
       setPath(result.path || []);
+      
+      const state = await fetchLearnerState(learnerId);
+      if (state) {
+        setDecayedSkills(state.decayed_skills || []);
+      } else {
+        setDecayedSkills([]);
+      }
     } catch (e) {
       setError(e.message);
       setPath(null);
+      setDecayedSkills([]);
     } finally {
       setLoading(false);
     }
@@ -94,7 +110,7 @@ export default function App() {
 
           <section className="card">
             <h2>Learning Path</h2>
-            <PathResult path={path} error={error} graphData={graphData} />
+            <PathResult path={path} error={error} graphData={graphData} decayedSkills={decayedSkills} />
           </section>
         </div>
 
