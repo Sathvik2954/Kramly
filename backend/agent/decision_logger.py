@@ -44,13 +44,19 @@ class DecisionLogEntry(BaseModel):
     added_skills: list[str]
     removed_skills: list[str]
     reason: str
+    natural_language_explanation: str
     execution_time_ms: float
+    planner_duration_ms: float
+    narration_duration_ms: float
 
 
 def log_decision(
     event: BaseEvent,
     result: ReplanningResult,
-    execution_time_ms: float
+    execution_time_ms: float,
+    natural_language_explanation: str = "",
+    planner_duration_ms: float = 0.0,
+    narration_duration_ms: float = 0.0
 ) -> DecisionLogEntry:
     """Formats, logs, and returns a structured record of a replanning decision.
     
@@ -71,7 +77,10 @@ def log_decision(
         added_skills=result.added_skills,
         removed_skills=result.removed_skills,
         reason=result.reason,
-        execution_time_ms=execution_time_ms
+        natural_language_explanation=natural_language_explanation,
+        execution_time_ms=execution_time_ms,
+        planner_duration_ms=planner_duration_ms,
+        narration_duration_ms=narration_duration_ms
     )
 
     # Use json.dumps to ensure the log is machine-parseable if piped to a central log server
