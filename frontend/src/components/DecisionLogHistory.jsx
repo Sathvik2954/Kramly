@@ -71,6 +71,19 @@ export default function DecisionLogHistory({ learnerId }) {
                 <span className="timeline-trigger">{trigger}</span>
               </span>
               <div className="timeline-text">{summary}</div>
+              {entry.natural_language_explanation && (
+                <div style={{
+                  marginTop: "0.35rem",
+                  fontSize: "0.85rem",
+                  color: "var(--text-secondary)",
+                  fontStyle: "italic",
+                  borderLeft: "2px solid var(--accent-primary)",
+                  paddingLeft: "0.5rem",
+                  lineHeight: "1.4"
+                }}>
+                  "{entry.natural_language_explanation}"
+                </div>
+              )}
               
               {hasDeltas && (
                 <div style={{ 

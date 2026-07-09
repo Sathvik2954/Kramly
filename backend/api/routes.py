@@ -37,7 +37,9 @@ import logging
 import time
 import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+import time
+from typing import List
 
 from app import graph_service
 from models.request import LearningPathRequest, TargetSkillRequest, EvidenceRequest
@@ -51,8 +53,14 @@ from agent.event_types import QuizCompleted, DeadlineChanged, TargetChanged, Man
 from agent.replanner import replan_learning_path
 from agent.decision_logger import log_decision
 
+from agent.models import DecayEvent
+from agent.scheduler import AgentScheduler
+
 from app.decay_scanner import scan_for_decayed_skills, _parse_timestamp
 from optimizer.decay import has_crossed_decay_threshold
+
+from marketplace.ingestion import ingest_resource
+from marketplace.concept_extraction import extract_and_link_concepts
 
 logger = logging.getLogger(__name__)
 
@@ -361,74 +369,195 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
     summary="Scan all learners for decayed skills and trigger replanning",
 )
 async def trigger_decay_scan():
-    """Scans all learners' skills for decay, triggers SkillForgotten events, and replans."""
+    """Scans all learners' skills for decay, triggers SkillForgotten events, and replans using the proactive agent scheduler."""
     driver = get_driver()
     now = datetime.datetime.now(datetime.timezone.utc)
-    try:
+    
+    def fetch_decay_events() -> list[DecayEvent]:
         with driver.session() as session:
-            # 1. Run the scan to detect decayed skills
-            flagged_decays = session.execute_read(scan_for_decayed_skills, now=now)
+            flagged = session.execute_read(scan_for_decayed_skills, now=now)
+        return [
+            DecayEvent(learner_id=f["learner_id"], skill_id=f["skill_id"])
+            for f in flagged
+        ]
+
+    def fetch_learner_context(learner_id: str) -> dict | None:
+        with driver.session() as session:
+            target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
+            if not target_skill_id:
+                return None
+            known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+            active_known_skills = _filter_active_skills(known_skills_data, now=now)
             
-            replans_triggered = 0
-            
-            # Group decays by learner_id so we only replan once per learner if they have multiple decayed skills
-            from collections import defaultdict
-            decays_by_learner = defaultdict(list)
-            for decay in flagged_decays:
-                decays_by_learner[decay["learner_id"]].append(decay)
+            previous_path = []
+            history = DECISION_LOGS.get(learner_id, [])
+            if history:
+                latest_entry = history[-1]
+                previous_path = latest_entry.get("new_path", [])
                 
-            for learner_id, decays in decays_by_learner.items():
-                # Fetch learner state
-                target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
-                if not target_skill_id:
-                    continue
-                    
-                known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
-                # Filter out all decayed skills to get the active known skills
-                active_known_skills = _filter_active_skills(known_skills_data, now=now)
-                
-                # Trigger a SkillForgotten event for the first decayed skill
-                first_decay = decays[0]
-                event = SkillForgotten(
-                    learner_id=learner_id,
-                    skill_id=first_decay["skill_id"],
-                    confidence_drop=first_decay["base_confidence"] - first_decay["decayed_confidence"]
-                )
-                
-                # Determine previous path from decision logs
-                previous_path = []
-                history = DECISION_LOGS.get(learner_id, [])
-                if history:
-                    latest_entry = history[-1]
-                    previous_path = latest_entry.get("new_path", [])
-                    
-                start_time = time.perf_counter()
-                
-                # Call replanner
-                result = replan_learning_path(
-                    known_skills=active_known_skills,
-                    target_skill=target_skill_id,
-                    current_path=previous_path,
-                    event=event,
-                    fetch_skill=graph_service.get_skill,
-                    fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
-                    fetch_prereq_edges=graph_service.get_prerequisite_edges,
-                )
-                
-                execution_time_ms = (time.perf_counter() - start_time) * 1000.0
-                
-                if result:
-                    log_entry = log_decision(event, result, execution_time_ms)
-                    DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
-                    replans_triggered += 1
-                    
+            return {
+                "known_skills": active_known_skills,
+                "target_skill": target_skill_id,
+                "current_path": previous_path
+            }
+
+    try:
+        scheduler = AgentScheduler(
+            fetch_decay_events=fetch_decay_events,
+            fetch_learner_context=fetch_learner_context,
+            fetch_skill=graph_service.get_skill,
+            fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
+            fetch_prereq_edges=graph_service.get_prerequisite_edges
+        )
+        
+        results = scheduler.run_now()
+        
+        for res in results:
+            entry = {
+                "timestamp": res.generated_at.isoformat(),
+                "learner_id": res.planner_decision.learner_id,
+                "event_type": "DecayThresholdCrossed",
+                "previous_path": res.planner_decision.old_path,
+                "new_path": res.planner_decision.new_path,
+                "added_skills": res.planner_decision.added_skills,
+                "removed_skills": res.planner_decision.removed_skills,
+                "reason": res.planner_decision.reason,
+                "natural_language_explanation": res.natural_language_reason,
+                "execution_time_ms": 0.0,
+                "planner_duration_ms": 0.0,
+                "narration_duration_ms": 0.0
+            }
+            DECISION_LOGS.setdefault(res.planner_decision.learner_id, []).append(entry)
+
         return {
             "status": "success",
-            "decays_detected": len(flagged_decays),
-            "replans_triggered": replans_triggered,
-            "details": flagged_decays
+            "decays_detected": len(results),
+            "replans_triggered": len(results),
+            "details": [
+                {
+                    "learner_id": r.planner_decision.learner_id,
+                    "skill_id": ", ".join(r.planner_decision.added_skills),
+                    "natural_language_reason": r.natural_language_reason
+                }
+                for r in results
+            ]
         }
     except Exception as exc:
-        logger.exception("Failed to run decay scan")
+        logger.exception("Failed to run decay scan using proactive agent scheduler")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post(
+    "/marketplace/resource",
+    summary="Ingest a new educational resource and extract covered concepts",
+)
+async def upload_resource(
+    title: str = Form(...),
+    resource_type: str = Form(...),
+    author_id: str = Form(...),
+    allow_duplicate: bool = Form(False),
+    file: UploadFile = File(...)
+):
+    """
+    Ingests an educational resource file (e.g. note, project, flashcard, etc.),
+    hashes it, stores it, and triggers LLM concept extraction.
+    """
+    driver = get_driver()
+    content_bytes = await file.read()
+    
+    # Simple validation against valid resource types from schema definition
+    valid_types = {"note", "project", "flashcard", "interview_experience", "research_summary"}
+    if resource_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid resource type. Must be one of: {', '.join(valid_types)}"
+        )
+        
+    try:
+        with driver.session() as session:
+            # 1. Run ingestion
+            ingest_res = session.execute_write(
+                ingest_resource,
+                title=title,
+                resource_type=resource_type,
+                author_id=author_id,
+                content=content_bytes,
+                allow_duplicate=allow_duplicate
+            )
+            
+            # 2. Extract and link concepts (convert text content for extraction)
+            # Decode bytes as text. Fallback to title if decode fails.
+            try:
+                resource_text = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                resource_text = f"Title: {title}. Binary content."
+                
+            concept_links = session.execute_write(
+                extract_and_link_concepts,
+                resource_id=ingest_res["resource_id"],
+                resource_text=resource_text
+            )
+            
+        return {
+            "status": "success",
+            "resource_id": ingest_res["resource_id"],
+            "storage_key": ingest_res["storage_key"],
+            "content_hash": ingest_res["content_hash"],
+            "concepts_extracted": concept_links
+        }
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+    except Exception as exc:
+        logger.exception("Failed to ingest marketplace resource")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get(
+    "/marketplace/resource/{resource_id}",
+    summary="Retrieve an ingested resource's metadata and content",
+)
+async def get_resource(resource_id: str):
+    """
+    Retrieves metadata from Neo4j and raw file contents from the storage backend.
+    """
+    driver = get_driver()
+    try:
+        with driver.session() as session:
+            # Fetch metadata
+            query = """
+            MATCH (r:Resource {id: $resource_id})
+            OPTIONAL MATCH (r)-[c:COVERS_CONCEPT]->(s:Skill)
+            RETURN r.id AS id, r.title AS title, r.type AS type, r.author_id AS author_id,
+                   r.upload_date AS upload_date, r.storage_key AS storage_key,
+                   r.status AS status, collect({skill_id: s.id, name: s.name, relevance_score: c.relevance_score}) AS covered_skills
+            """
+            result = session.run(query, resource_id=resource_id)
+            record = result.single()
+            if not record:
+                raise HTTPException(status_code=404, detail="Resource not found")
+                
+            metadata = dict(record)
+            
+            # Fetch content from storage
+            from marketplace.storage import get_storage_backend
+            storage = get_storage_backend()
+            
+            content_bytes = b""
+            if storage.exists(metadata["storage_key"]):
+                content_bytes = storage.read(metadata["storage_key"])
+                
+            try:
+                content_str = content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                content_str = "[Binary Content]"
+                
+            return {
+                "metadata": metadata,
+                "content": content_str
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to retrieve resource")
         raise HTTPException(status_code=500, detail=str(exc))
 

@@ -5,8 +5,8 @@ from backend.agent.proactive_agent import process_decay_events, DecayThresholdCr
 
 
 @patch("backend.agent.proactive_agent.generate_narration")
-@patch("backend.agent.proactive_agent.replan_learning_path")
 @patch("backend.agent.proactive_agent.should_replan")
+@patch("backend.agent.proactive_agent.replan_learning_path")
 @patch("backend.agent.proactive_agent.log_decision")
 def test_process_decay_events_full_flow(
     mock_log, mock_replan, mock_should_replan, mock_generate_narration
