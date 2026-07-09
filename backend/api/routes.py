@@ -37,7 +37,7 @@ import logging
 import time
 import datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
 import time
 from typing import List
 
@@ -560,4 +560,97 @@ async def get_resource(resource_id: str):
     except Exception as exc:
         logger.exception("Failed to retrieve resource")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post(
+    "/marketplace/resource/{resource_id}/rate",
+    summary="Submit a peer rating for a marketplace resource",
+)
+async def rate_resource(resource_id: str, author_id: str = Query(...), rating: float = Query(...)):
+    """
+    Records a rating relationship (:Author)-[:RATED {score}]->(:Resource) and recomputes the resource quality score.
+    """
+    if not (0.0 <= rating <= 5.0):
+        raise HTTPException(status_code=400, detail="Rating must be between 0.0 and 5.0")
+        
+    driver = get_driver()
+    try:
+        with driver.session() as session:
+            session.run(
+                """
+                MATCH (r:Resource {id: $resource_id})
+                MERGE (a:Author {id: $author_id})
+                MERGE (a)-[rated:RATED]->(r)
+                SET rated.score = $rating
+                """,
+                resource_id=resource_id,
+                author_id=author_id,
+                rating=rating
+            )
+            
+            from marketplace.quality_scoring import get_resource_rating_data, compute_quality_score, update_resource_quality_score
+            rating_data = session.execute_read(get_resource_rating_data, resource_id=resource_id)
+            
+            quality_score = 0.0
+            if rating_data:
+                confirmed_count = rating_data.get("confirmed_skill_count", 0)
+                claimed_count = max(1, confirmed_count)
+                
+                try:
+                    upload_dt = datetime.datetime.fromisoformat(rating_data["upload_date"]) if isinstance(rating_data["upload_date"], str) else rating_data["upload_date"]
+                except Exception:
+                    upload_dt = datetime.datetime.now(datetime.timezone.utc)
+                    
+                quality_score = compute_quality_score(
+                    peer_rating_avg=rating_data["peer_rating_avg"],
+                    upload_date=upload_dt,
+                    claimed_skill_count=claimed_count,
+                    confirmed_skill_count=confirmed_count
+                )
+                
+                session.execute_write(update_resource_quality_score, resource_id=resource_id, quality_score=quality_score)
+                
+        return {
+            "status": "success",
+            "message": f"Rating recorded. New quality score computed: {quality_score:.3f}"
+        }
+    except Exception as exc:
+        logger.exception("Failed to rate resource")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post(
+    "/marketplace/resource/{old_resource_id}/supersede",
+    summary="Mark a resource as superseded by a newer one",
+)
+async def supersede_resource(old_resource_id: str, new_resource_id: str = Query(...)):
+    """
+    Marks an old resource as superseded by a new resource.
+    """
+    driver = get_driver()
+    try:
+        from marketplace.evolution_tracking import mark_superseded
+        with driver.session() as session:
+            session.execute_write(mark_superseded, old_resource_id=old_resource_id, new_resource_id=new_resource_id)
+        return {"status": "success", "message": f"Resource {old_resource_id} is now outdated and superseded by {new_resource_id}."}
+    except Exception as exc:
+        logger.exception("Failed to supersede resource")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get(
+    "/marketplace/resource/{resource_id}/history",
+    summary="Get the chain of superseded versions for this resource",
+)
+async def get_resource_history(resource_id: str):
+    driver = get_driver()
+    try:
+        from marketplace.evolution_tracking import get_superseded_chain
+        with driver.session() as session:
+            chain = session.execute_read(get_superseded_chain, resource_id=resource_id)
+        return {"resource_id": resource_id, "history": chain}
+    except Exception as exc:
+        logger.exception("Failed to get resource history")
+        raise HTTPException(status_code=500, detail=str(exc))
+
 

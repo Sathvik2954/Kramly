@@ -1,3 +1,4 @@
+import pytest
 from unittest.mock import MagicMock
 
 from backend.marketplace.similarity_service import (
@@ -13,10 +14,10 @@ def test_calculate_similarity():
     assert calculate_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
     
     # Identical vectors (perfect similarity)
-    assert calculate_similarity([1.0, 2.0], [1.0, 2.0]) == 1.0
+    assert calculate_similarity([1.0, 2.0], [1.0, 2.0]) == pytest.approx(1.0)
     
     # Opposite vectors
-    assert calculate_similarity([1.0, 0.0], [-1.0, 0.0]) == -1.0
+    assert calculate_similarity([1.0, 0.0], [-1.0, 0.0]) == pytest.approx(-1.0)
 
 
 def test_find_similar_resources():

@@ -95,3 +95,72 @@ export async function setLearnerTarget(learnerId, { targetSkill, deadline }) {
 
   return response.json();
 }
+
+export async function fetchMarketplaceRecommendations(skillId) {
+  const response = await fetch(`${API_BASE_URL}/marketplace/resources?skill_id=${skillId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch recommendations: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchResourceDetails(resourceId) {
+  const response = await fetch(`${API_BASE_URL}/marketplace/resource/${resourceId}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch resource details: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function uploadResource({ title, author, description, coveredSkills, content }) {
+  const formData = new FormData();
+  formData.append("title", title);
+  formData.append("author", author);
+  formData.append("description", description || "");
+  formData.append("covered_skills", JSON.stringify(coveredSkills));
+  
+  const blob = new Blob([content], { type: "text/plain" });
+  formData.append("file", blob, "resource.txt");
+
+  const response = await fetch(`${API_BASE_URL}/marketplace/resource`, {
+    method: "POST",
+    body: formData
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || errorBody.message || `Upload failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function rateResource(resourceId, authorId, rating) {
+  const response = await fetch(`${API_BASE_URL}/marketplace/resource/${resourceId}/rate?author_id=${authorId}&rating=${rating}`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(errorBody.detail || errorBody.message || "Failed to submit rating.");
+  }
+  return response.json();
+}
+
+export async function supersedeResource(oldResourceId, newResourceId) {
+  const response = await fetch(`${API_BASE_URL}/marketplace/resource/${oldResourceId}/supersede?new_resource_id=${newResourceId}`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error("Failed to supersede resource.");
+  }
+  return response.json();
+}
+
+export async function fetchResourceHistory(resourceId) {
+  const response = await fetch(`${API_BASE_URL}/marketplace/resource/${resourceId}/history`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch resource history.");
+  }
+  return response.json();
+}
+
