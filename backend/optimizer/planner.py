@@ -40,8 +40,20 @@ Design decisions
       come before dependents.
    g) **Append target** — add the target skill at the end of the path.
    h) **Return** — the ordered list of skill IDs.
+
+5. **Phase 6 — Trust-aware mode (optional).**
+   When ``edge_weights`` is provided, the planner uses a priority-aware
+   variant of Kahn's algorithm.  Among nodes at the same topological level
+   (all with in-degree 0), the one reachable via the lowest accumulated
+   edge cost is emitted first.  This lets crowd-confidence scores from
+   Person A's trust pipeline influence the *ordering* of the learning path
+   without changing which skills are included.
+
+   When ``edge_weights`` is absent, the original unweighted Kahn's
+   algorithm runs unchanged — full backward compatibility.
 """
 
+import heapq
 import logging
 from collections import deque
 from typing import Callable, Optional
@@ -123,6 +135,102 @@ def _topological_sort_kahn(
     return sorted_result
 
 
+def _topological_sort_kahn_weighted(
+    node_ids: list[str],
+    edges: list[tuple[str, str]],
+    edge_weights: dict[tuple[str, str], float],
+) -> list[str]:
+    """Priority-aware topological sort using Kahn's algorithm with edge weights.
+
+    This variant replaces the plain FIFO queue with a min-heap keyed on
+    accumulated edge cost.  Among nodes at the same topological level
+    (all with in-degree 0), the one reached via the cheapest incoming
+    edge is emitted first.
+
+    This means the planner prefers paths through high-confidence edges
+    (which have lower ``final_weight`` values from the trust-weighting
+    module) without violating prerequisite ordering.
+
+    Parameters
+    ----------
+    node_ids : list[str]
+        All nodes to include in the sort.
+    edges : list[tuple[str, str]]
+        Directed edges as ``(from_id, to_id)``.
+    edge_weights : dict[tuple[str, str], float]
+        Mapping of ``(from_id, to_id)`` to traversal cost.  Missing
+        edges default to ``1.0``.
+
+    Returns
+    -------
+    list[str]
+        Nodes in trust-weighted topological order.
+
+    Raises
+    ------
+    CycleDetected
+        If the graph contains a cycle.
+    """
+    adjacency: dict[str, list[str]] = {nid: [] for nid in node_ids}
+    in_degree: dict[str, int] = {nid: 0 for nid in node_ids}
+
+    for src, dst in edges:
+        if src in adjacency and dst in adjacency:
+            adjacency[src].append(dst)
+            in_degree[dst] += 1
+
+    # Accumulated cost to reach each node.
+    # Root nodes (in-degree 0 within the subgraph) may have incoming edges
+    # from nodes *outside* the subgraph (e.g. already-known skills).
+    # We seed their cost with the minimum weight of any such incoming edge
+    # so that trust signals from known skills propagate correctly.
+    cost: dict[str, float] = {}
+    node_set = set(node_ids)
+    for nid in node_ids:
+        if in_degree[nid] == 0:
+            # Find the minimum incoming edge weight from any source
+            # (including sources outside the subgraph).
+            incoming_costs = [
+                w for (src, dst), w in edge_weights.items()
+                if dst == nid
+            ]
+            cost[nid] = min(incoming_costs) if incoming_costs else 0.0
+        else:
+            cost[nid] = float("inf")  # will be updated during traversal
+
+    # Min-heap: (accumulated_cost, node_id).  node_id breaks ties
+    # deterministically (lexicographic).
+    heap: list[tuple[float, str]] = []
+    for nid in node_ids:
+        if in_degree[nid] == 0:
+            heapq.heappush(heap, (cost[nid], nid))
+
+    sorted_result: list[str] = []
+
+    while heap:
+        node_cost, node = heapq.heappop(heap)
+        sorted_result.append(node)
+
+        for neighbor in adjacency[node]:
+            # Update neighbor's cost: cheapest incoming path wins.
+            edge_cost = edge_weights.get((node, neighbor), 1.0)
+            candidate_cost = node_cost + edge_cost
+            if candidate_cost < cost[neighbor]:
+                cost[neighbor] = candidate_cost
+
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                heapq.heappush(heap, (cost[neighbor], neighbor))
+
+    if len(sorted_result) != len(node_ids):
+        stuck = [nid for nid in node_ids if nid not in set(sorted_result)]
+        raise CycleDetected(
+            f"Cycle detected among prerequisite skills: {stuck}"
+        )
+
+    return sorted_result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -134,6 +242,7 @@ def generate_learning_path(
     fetch_skill: FetchSkill,
     fetch_all_prereqs_recursive: FetchAllPrereqsRecursive,
     fetch_prereq_edges: FetchPrereqEdges,
+    edge_weights: Optional[dict[tuple[str, str], float]] = None,
 ) -> list[str]:
     """Compute an ordered learning path from the learner's current state to the target.
 
@@ -151,6 +260,12 @@ def generate_learning_path(
     fetch_prereq_edges : callable
         ``(skill_ids) -> list[(from, to)]``.  Returns edges among
         a given set of skills.
+    edge_weights : dict, optional
+        Mapping of ``(from_id, to_id)`` to traversal cost (float).
+        When provided, the planner uses trust-aware topological sorting
+        that prefers paths through lower-cost (higher-confidence) edges.
+        When ``None`` (default), the original unweighted Kahn's algorithm
+        is used — fully backward compatible.
 
     Returns
     -------
@@ -169,6 +284,7 @@ def generate_learning_path(
 
     Examples
     --------
+    >>> # Standard mode (unchanged from Phase 1)
     >>> path = generate_learning_path(
     ...     known_skills=["web01", "web02"],
     ...     target_skill="web08",
@@ -177,10 +293,18 @@ def generate_learning_path(
     ...     fetch_prereq_edges=graph_service.get_prerequisite_edges,
     ... )
     ["web03", "web04", "web05", "web07", "web08"]
+
+    >>> # Trust-aware mode (Phase 6)
+    >>> weights = {("web03", "web04"): 0.5, ("web03", "web05"): 2.0}
+    >>> path = generate_learning_path(
+    ...     ...,
+    ...     edge_weights=weights,
+    ... )
     """
+    trust_aware = edge_weights is not None
     logger.info(
-        "Generating learning path: known=%s, target='%s'",
-        known_skills, target_skill,
+        "Generating learning path: known=%s, target='%s', trust_aware=%s",
+        known_skills, target_skill, trust_aware,
     )
 
     # --- Step 1: Validate target skill exists ---
@@ -225,7 +349,13 @@ def generate_learning_path(
     edges = fetch_prereq_edges(all_skills_for_edges)
 
     # --- Step 7: Topological sort ---
-    sorted_path = _topological_sort_kahn(all_skills_for_edges, edges)
+    if trust_aware:
+        logger.debug("Using trust-weighted topological sort.")
+        sorted_path = _topological_sort_kahn_weighted(
+            all_skills_for_edges, edges, edge_weights,
+        )
+    else:
+        sorted_path = _topological_sort_kahn(all_skills_for_edges, edges)
 
     logger.info(
         "Generated learning path (%d steps): %s",
