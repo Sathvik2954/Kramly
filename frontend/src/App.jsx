@@ -4,6 +4,7 @@ import PathResult from "./components/PathResult";
 import GraphVisualization from "./components/GraphVisualization";
 import DecisionLogHistory from "./components/DecisionLogHistory";
 import LearnerConfigForm from "./components/LearnerConfigForm";
+import MarketplacePanel from "./components/MarketplacePanel";
 import { fetchLearningPath, fetchSkillGraph, fetchLearnerState } from "./api/client";
 
 export default function App() {
@@ -111,6 +112,11 @@ export default function App() {
           <section className="card">
             <h2>Learning Path</h2>
             <PathResult path={path} error={error} graphData={graphData} decayedSkills={decayedSkills} />
+          </section>
+
+          <section className="card">
+            <h2>Study Notes Marketplace</h2>
+            <MarketplacePanel graphData={graphData} />
           </section>
         </div>
 
