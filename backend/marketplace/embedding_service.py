@@ -18,26 +18,41 @@ class EmbeddingProvider(ABC):
         pass
 
 
-class OllamaEmbeddingProvider(EmbeddingProvider):
+class MistralEmbeddingProvider(EmbeddingProvider):
     """
-    Concrete implementation of EmbeddingProvider using the Ollama API.
+    Concrete implementation of EmbeddingProvider using Mistral's hosted
+    embeddings API (POST /v1/embeddings, model "mistral-embed").
+
+    Verified against https://docs.mistral.ai/api/endpoint/embeddings.
+    Uses raw `httpx` (same pattern as `agent.llm_client`) rather than the
+    `mistralai` SDK, to avoid a second HTTP-client dependency for one call.
     """
-    def __init__(self, model_name: str = "mxbai-embed-large"):
+    ENDPOINT = "https://api.mistral.ai/v1/embeddings"
+
+    def __init__(self, api_key: str = None, model_name: str = "mistral-embed"):
+        if not api_key:
+            from app.config import settings
+            api_key = settings.mistral_api_key
+        if not api_key:
+            raise ValueError("MISTRAL_API_KEY is not configured.")
+        self.api_key = api_key
         self.model_name = model_name
-        
-        # Dynamically import to prevent hard-crashing if library is missing in some environments
-        try:
-            self.ollama = importlib.import_module("ollama")
-        except ImportError:
-            logger.error("Failed to import 'ollama'. Please install it.")
-            raise
 
     def generate_embedding(self, text: str) -> List[float]:
+        import httpx
+
         try:
-            response = self.ollama.embeddings(model=self.model_name, prompt=text)
-            return response.get("embedding", [])
+            response = httpx.post(
+                self.ENDPOINT,
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={"model": self.model_name, "input": text},
+                timeout=20.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["data"][0]["embedding"]
         except Exception as e:
-            logger.error(f"Ollama embedding failed: {e}")
+            logger.error(f"Mistral embedding failed: {e}")
             raise
 
 

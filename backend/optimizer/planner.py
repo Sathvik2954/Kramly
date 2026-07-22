@@ -41,12 +41,12 @@ Design decisions
    g) **Append target** — add the target skill at the end of the path.
    h) **Return** — the ordered list of skill IDs.
 
-5. **Phase 6 — Trust-aware mode (optional).**
+5. **Trust-aware mode (optional).**
    When ``edge_weights`` is provided, the planner uses a priority-aware
    variant of Kahn's algorithm.  Among nodes at the same topological level
    (all with in-degree 0), the one reachable via the lowest accumulated
    edge cost is emitted first.  This lets crowd-confidence scores from
-   Person A's trust pipeline influence the *ordering* of the learning path
+   the trust pipeline influence the *ordering* of the learning path
    without changing which skills are included.
 
    When ``edge_weights`` is absent, the original unweighted Kahn's

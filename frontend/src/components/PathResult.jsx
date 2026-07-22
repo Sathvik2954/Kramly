@@ -17,7 +17,7 @@ export default function PathResult({ path, error, graphData, decayedSkills = [] 
   if (error) {
     let errTitle = "Error";
     let errDetail = error;
-    
+
     // Distinguish specific error categories for the audit checklist
     if (error.includes("Failed to fetch") || error.includes("NetworkError")) {
       errTitle = "Connection Failure";
@@ -36,20 +36,19 @@ export default function PathResult({ path, error, graphData, decayedSkills = [] 
   }
 
   if (path === null) {
-    return <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>No path computed yet. Submit the form above to generate a path.</p>;
+    return <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", fontFamily: "var(--font-mono)" }}>No path computed yet. Submit the form above to generate a path.</p>;
   }
 
   if (path.length === 0) {
     return (
-      <div style={{ 
-        padding: "1rem", 
-        backgroundColor: "var(--accent-success-bg)", 
-        border: "1px solid var(--accent-success)", 
-        borderRadius: "8px", 
-        fontSize: "0.9rem", 
-        color: "var(--text-primary)" 
+      <div style={{
+        padding: "1rem",
+        backgroundColor: "var(--accent-success-bg)",
+        border: "var(--border-w) solid var(--border-color)",
+        fontSize: "0.9rem",
+        color: "var(--text-primary)"
       }}>
-        <strong>Already Mastered:</strong> You already know the target skill! No additional training required.
+        <strong style={{ textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.04em" }}>Already Mastered:</strong> You already know the target skill! No additional training required.
       </div>
     );
   }
@@ -60,13 +59,14 @@ export default function PathResult({ path, error, graphData, decayedSkills = [] 
         <div style={{
           padding: "0.75rem 1rem",
           backgroundColor: "var(--accent-error-bg)",
-          border: "1px solid var(--accent-error)",
-          borderRadius: "8px",
+          border: "var(--border-w) solid var(--accent-error)",
           fontSize: "0.85rem",
           color: "var(--text-primary)",
           marginBottom: "1rem"
         }}>
-          <strong style={{ display: "block", marginBottom: "0.25rem" }}>⚠️ Forgotten concepts detected:</strong>
+          <strong style={{ display: "block", marginBottom: "0.35rem", textTransform: "uppercase", fontSize: "0.72rem", letterSpacing: "0.04em", color: "var(--accent-error)" }}>
+            Forgotten concepts detected
+          </strong>
           <ul style={{ margin: "0", paddingLeft: "1.25rem", color: "var(--text-secondary)" }}>
             {decayedSkills.map(id => (
               <li key={id}>
@@ -81,7 +81,7 @@ export default function PathResult({ path, error, graphData, decayedSkills = [] 
         </div>
       )}
 
-      <h3 style={{ fontSize: "1rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
+      <h3 className="section-title" style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
         Recommended Progression
       </h3>
       <ol className="step-list">

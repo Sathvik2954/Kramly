@@ -31,6 +31,13 @@ Design decisions
    The planner receives ``graph_service.get_skill`` etc. as callables —
    the route is the *only* place where ``graph_service`` and ``planner``
    meet.  Neither knows about the other directly.
+
+6. **Decision log is persisted to Neo4j, not kept in memory.**
+   Every route that used to read/write a module-level ``DECISION_LOGS``
+   dict now goes through ``app.decision_log_service`` instead — a restart
+   no longer wipes a learner's replanning history. See that module's
+   docstring for why writing this data from the backend is fine despite
+   graph_service.py's read-only design.
 """
 
 import logging
@@ -38,36 +45,35 @@ import time
 import datetime
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
-import time
-from typing import List
+from typing import List, Optional
 
 from app import graph_service
-from models.request import LearningPathRequest, TargetSkillRequest, EvidenceRequest
-from models.response import ErrorResponse, LearningPathResponse
+from models import LearningPathRequest, TargetSkillRequest, EvidenceRequest, ErrorResponse, LearningPathResponse
 from optimizer.exceptions import CycleDetected, NoLearningPath, SkillNotFound
 from optimizer.planner import generate_learning_path
 from app.knowledge_state import set_target_skill, record_evidence, get_learner_target_skill, get_learner_known_skills
+from app.decision_log_service import record_decision_log_entry, fetch_decision_log
 from app.database import get_driver
 
-from agent.event_types import QuizCompleted, DeadlineChanged, TargetChanged, ManualReplanRequested, SkillForgotten
-from agent.replanner import replan_learning_path
-from agent.decision_logger import log_decision
-
-from agent.models import DecayEvent
-from agent.scheduler import AgentScheduler
+from agent.models import (
+    QuizCompleted,
+    DeadlineChanged,
+    TargetChanged,
+    ManualReplanRequested,
+    SkillForgotten,
+    DecayEvent,
+)
+from agent.engine import replan_learning_path, log_decision, AgentScheduler
 
 from app.decay_scanner import scan_for_decayed_skills, _parse_timestamp
 from optimizer.decay import has_crossed_decay_threshold
 
-from marketplace.ingestion import ingest_resource
-from marketplace.concept_extraction import extract_and_link_concepts
+from marketplace.ingestion import ingest_resource, extract_and_link_concepts
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# In-memory store for decision logs keyed by learner_id (Phase 2 feature)
-DECISION_LOGS: dict[str, list[dict]] = {}
 
 def _filter_active_skills(known_skills_data: list[dict], now: datetime.datetime = None) -> list[str]:
     """Filters out skills that have crossed the decay threshold."""
@@ -83,6 +89,22 @@ def _filter_active_skills(known_skills_data: list[dict], now: datetime.datetime 
         except Exception:
             active.append(s["skill_id"])
     return active
+
+
+def _get_previous_path(session, learner_id: str) -> list[str]:
+    """Reads the most recent decision's new_path from Neo4j, or [] if the
+    learner has no decision history yet."""
+    history = session.execute_read(fetch_decision_log, learner_id=learner_id)
+    if history:
+        return history[-1].get("new_path", [])
+    return []
+
+
+def _save_decision(session, learner_id: str, log_entry) -> None:
+    """Persists a DecisionLogEntry (or equivalent dict) to Neo4j."""
+    entry_dict = log_entry.model_dump() if hasattr(log_entry, "model_dump") else log_entry
+    session.execute_write(record_decision_log_entry, learner_id=learner_id, entry=entry_dict)
+
 
 @router.post(
     "/learning-path",
@@ -119,13 +141,11 @@ async def create_learning_path(
         request.target_skill,
     )
 
+    driver = get_driver()
     try:
-        # Determine previous path (if any) from decision logs
-        previous_path = []
-        history = DECISION_LOGS.get(request.learner_id, [])
-        if history:
-            latest_entry = history[-1]
-            previous_path = latest_entry.get("new_path", [])
+        # Determine previous path (if any) from the persisted decision log
+        with driver.session() as session:
+            previous_path = _get_previous_path(session, request.learner_id)
 
         # Create ManualReplanRequested event
         event = ManualReplanRequested(
@@ -149,10 +169,10 @@ async def create_learning_path(
         execution_time_ms = (time.perf_counter() - start_time) * 1000.0
 
         if result:
-            # Log decision and get structured entry
+            # Log decision and persist it
             log_entry = log_decision(event, result, execution_time_ms)
-            # Save to in-memory decision logs
-            DECISION_LOGS.setdefault(request.learner_id, []).append(log_entry.model_dump())
+            with driver.session() as session:
+                _save_decision(session, request.learner_id, log_entry)
             path = result.new_path
         else:
             path = previous_path
@@ -181,24 +201,68 @@ async def create_learning_path(
     "/decision-log/{learner_id}",
     summary="Get decision log history for a learner",
 )
-async def get_decision_log(learner_id: str):
-    """Retrieve in-memory decision log entries for a given learner."""
-    return DECISION_LOGS.get(learner_id, [])
+async def get_decision_log_route(learner_id: str):
+    """Retrieve a learner's persisted decision log entries from Neo4j."""
+    driver = get_driver()
+    with driver.session() as session:
+        return session.execute_read(fetch_decision_log, learner_id=learner_id)
+
+
+@router.get(
+    "/agentic-decision-log/{learner_id}",
+    summary="Get the agentic observe-reason-act trace for a learner",
+)
+async def get_agentic_decision_log_route(learner_id: str):
+    """Retrieve a learner's persisted AgenticDecision entries from Neo4j -
+    what the observe-reason-act loop (agent/observation.py + controller.py
+    + executor.py, run via AgentScheduler.run_agentic_cycle) observed,
+    which action it chose and why, and what executing it produced. Kept as
+    a separate endpoint/node type from /decision-log so the older
+    single-action replan flow that route reads is unaffected.
+    """
+    from app.decision_log_service import fetch_agentic_decision_log
+
+    driver = get_driver()
+    with driver.session() as session:
+        return session.execute_read(fetch_agentic_decision_log, learner_id=learner_id)
 
 
 @router.get(
     "/graph",
-    summary="Get the full skill graph for visualization",
+    summary="Get the skill graph for visualization, optionally scoped to one domain",
 )
-async def get_graph():
-    """Retrieve all skill nodes and prerequisite edges for visualization."""
+async def get_graph(domain: Optional[str] = Query(None, description="If set, only return skills/edges in this domain.")):
+    """Retrieve skill nodes and prerequisite edges for visualization.
+
+    Without ``?domain=``, returns every domain's skills combined. With it,
+    scopes the result to a single domain — the frontend uses this so the
+    graph view starts empty and only renders once a domain is chosen,
+    rather than always dumping every domain into one view.
+    """
     try:
-        return graph_service.get_graph_visualization_data()
+        return graph_service.get_graph_visualization_data(domain=domain)
     except Exception as exc:
         logger.exception("Failed to fetch graph data")
         raise HTTPException(
             status_code=500,
             detail="Failed to fetch graph data from the database.",
+        ) from exc
+
+
+@router.get(
+    "/domains",
+    summary="Get the list of distinct skill domains",
+)
+async def get_domains():
+    """Retrieve every distinct domain present in the graph, for populating
+    a domain selector in the UI."""
+    try:
+        return graph_service.get_distinct_domains()
+    except Exception as exc:
+        logger.exception("Failed to fetch domains")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch domain list from the database.",
         ) from exc
 
 
@@ -248,15 +312,9 @@ async def update_target_skill(learner_id: str, request: TargetSkillRequest):
             session.execute_write(set_target_skill, learner_id, request.target_skill, request.deadline)
             # Fetch known skills for this learner
             known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+            previous_path = _get_previous_path(session, learner_id)
         
         known_skills = _filter_active_skills(known_skills_data)
-
-        # Determine previous path (if any)
-        previous_path = []
-        history = DECISION_LOGS.get(learner_id, [])
-        if history:
-            latest_entry = history[-1]
-            previous_path = latest_entry.get("new_path", [])
 
         # Create TargetChanged or DeadlineChanged event
         if request.deadline:
@@ -288,7 +346,8 @@ async def update_target_skill(learner_id: str, request: TargetSkillRequest):
 
         if result:
             log_entry = log_decision(event, result, execution_time_ms)
-            DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
+            with driver.session() as session:
+                _save_decision(session, learner_id, log_entry)
 
         return {"status": "success", "message": f"Target skill set to '{request.target_skill}' for learner '{learner_id}'"}
     except HTTPException:
@@ -322,11 +381,8 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
 
         if target_skill_id:
             # Determine previous path (if any)
-            previous_path = []
-            history = DECISION_LOGS.get(learner_id, [])
-            if history:
-                latest_entry = history[-1]
-                previous_path = latest_entry.get("new_path", [])
+            with driver.session() as session:
+                previous_path = _get_previous_path(session, learner_id)
 
             # Create QuizCompleted event
             passed = request.confidence >= 0.70
@@ -354,7 +410,8 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
 
             if result:
                 log_entry = log_decision(event, result, execution_time_ms)
-                DECISION_LOGS.setdefault(learner_id, []).append(log_entry.model_dump())
+                with driver.session() as session:
+                    _save_decision(session, learner_id, log_entry)
 
         return {"status": "success", "message": f"Recorded evidence for skill '{request.skill_id}' for learner '{learner_id}'"}
     except HTTPException:
@@ -369,7 +426,13 @@ async def add_evidence(learner_id: str, request: EvidenceRequest):
     summary="Scan all learners for decayed skills and trigger replanning",
 )
 async def trigger_decay_scan():
-    """Scans all learners' skills for decay, triggers SkillForgotten events, and replans using the proactive agent scheduler."""
+    """Scans all learners' skills for decay, triggers SkillForgotten events, and replans using the proactive agent scheduler.
+
+    This is the on-demand equivalent of the autonomous background job
+    main.py's lifespan starts via AgentScheduler.start_scheduler() — this
+    route lets you trigger the same workflow immediately regardless of
+    where the background schedule currently is.
+    """
     driver = get_driver()
     now = datetime.datetime.now(datetime.timezone.utc)
     
@@ -388,13 +451,8 @@ async def trigger_decay_scan():
                 return None
             known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
             active_known_skills = _filter_active_skills(known_skills_data, now=now)
-            
-            previous_path = []
-            history = DECISION_LOGS.get(learner_id, [])
-            if history:
-                latest_entry = history[-1]
-                previous_path = latest_entry.get("new_path", [])
-                
+            previous_path = _get_previous_path(session, learner_id)
+
             return {
                 "known_skills": active_known_skills,
                 "target_skill": target_skill_id,
@@ -412,22 +470,22 @@ async def trigger_decay_scan():
         
         results = scheduler.run_now()
         
-        for res in results:
-            entry = {
-                "timestamp": res.generated_at.isoformat(),
-                "learner_id": res.planner_decision.learner_id,
-                "event_type": "DecayThresholdCrossed",
-                "previous_path": res.planner_decision.old_path,
-                "new_path": res.planner_decision.new_path,
-                "added_skills": res.planner_decision.added_skills,
-                "removed_skills": res.planner_decision.removed_skills,
-                "reason": res.planner_decision.reason,
-                "natural_language_explanation": res.natural_language_reason,
-                "execution_time_ms": 0.0,
-                "planner_duration_ms": 0.0,
-                "narration_duration_ms": 0.0
-            }
-            DECISION_LOGS.setdefault(res.planner_decision.learner_id, []).append(entry)
+        with driver.session() as session:
+            for res in results:
+                entry = {
+                    "timestamp": res.generated_at.isoformat(),
+                    "event_type": "DecayThresholdCrossed",
+                    "previous_path": res.planner_decision.old_path,
+                    "new_path": res.planner_decision.new_path,
+                    "added_skills": res.planner_decision.added_skills,
+                    "removed_skills": res.planner_decision.removed_skills,
+                    "reason": res.planner_decision.reason,
+                    "natural_language_explanation": res.natural_language_reason,
+                    "execution_time_ms": 0.0,
+                    "planner_duration_ms": 0.0,
+                    "narration_duration_ms": 0.0
+                }
+                _save_decision(session, res.planner_decision.learner_id, entry)
 
         return {
             "status": "success",
@@ -588,8 +646,10 @@ async def rate_resource(resource_id: str, author_id: str = Query(...), rating: f
                 rating=rating
             )
             
-            from marketplace.quality_scoring import get_resource_rating_data, compute_quality_score, update_resource_quality_score
+            from marketplace.quality import get_resource_rating_data, compute_quality_score, update_resource_quality_score
+            from optimizer.calibration import get_active_quality_weights
             rating_data = session.execute_read(get_resource_rating_data, resource_id=resource_id)
+            active_weights = session.execute_read(get_active_quality_weights)
             
             quality_score = 0.0
             if rating_data:
@@ -605,7 +665,8 @@ async def rate_resource(resource_id: str, author_id: str = Query(...), rating: f
                     peer_rating_avg=rating_data["peer_rating_avg"],
                     upload_date=upload_dt,
                     claimed_skill_count=claimed_count,
-                    confirmed_skill_count=confirmed_count
+                    confirmed_skill_count=confirmed_count,
+                    weights=active_weights,
                 )
                 
                 session.execute_write(update_resource_quality_score, resource_id=resource_id, quality_score=quality_score)
@@ -629,7 +690,7 @@ async def supersede_resource(old_resource_id: str, new_resource_id: str = Query(
     """
     driver = get_driver()
     try:
-        from marketplace.evolution_tracking import mark_superseded
+        from marketplace.quality import mark_superseded
         with driver.session() as session:
             session.execute_write(mark_superseded, old_resource_id=old_resource_id, new_resource_id=new_resource_id)
         return {"status": "success", "message": f"Resource {old_resource_id} is now outdated and superseded by {new_resource_id}."}
@@ -645,12 +706,12 @@ async def supersede_resource(old_resource_id: str, new_resource_id: str = Query(
 async def get_resource_history(resource_id: str):
     driver = get_driver()
     try:
-        from marketplace.evolution_tracking import get_superseded_chain
+        from marketplace.quality import get_superseded_chain
         with driver.session() as session:
             chain = session.execute_read(get_superseded_chain, resource_id=resource_id)
-        return {"resource_id": resource_id, "history": chain}
+        return {            "resource_id": resource_id,
+            "history": chain
+        }
     except Exception as exc:
         logger.exception("Failed to get resource history")
         raise HTTPException(status_code=500, detail=str(exc))
-
-

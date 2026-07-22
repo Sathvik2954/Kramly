@@ -1,6 +1,6 @@
 # Kramly
 
-**An agentic AI system that models the structure of knowledge itself and continuously re-plans a learner's optimal path through it.**
+**A graph-based adaptive learning-path optimizer with a genuinely agentic reasoning layer.**
 
 > **Note on the name:** "Kramly" is derived from the Sanskrit/Hindi word _Krama_ (क्रम — sequence, order). I am not a certain, fluent authority on Sanskrit/Hindi etymology — before using this name publicly, verify the root word's meaning and connotation with a native speaker or reliable dictionary.
 
@@ -8,454 +8,227 @@
 
 ## Table of Contents
 
-1. [Background & Problem Statement](#background--problem-statement)
-2. [Why This Is Agentic (Not Just RAG)](#why-this-is-agentic-not-just-rag)
-3. [Architecture](#architecture)
-4. [Tech Stack](#tech-stack)
-5. [Graph Schema](#graph-schema)
-6. [Repository Structure](#repository-structure)
-7. [Detailed Phase-Wise Plan](#detailed-phase-wise-plan)
-8. [AWS EC2 Deployment Plan](#aws-ec2-deployment-plan)
-9. [Production-Grade Design Decisions](#production-grade-design-decisions)
-10. [Team & Work Split](#team--work-split)
-11. [Open Questions](#open-questions)
-12. [Roadmap Status](#roadmap-status)
-13. [Novelty Verification](#novelty-verification)
-14. [Notes, Assumptions & Things to Verify](#notes-assumptions--things-to-verify)
-15. [License](#license)
+1. [What Kramly Is](#what-kramly-is)
+2. [Architecture](#architecture)
+3. [The Agentic Loop](#the-agentic-loop)
+4. [Human-in-the-Loop Review Governance](#human-in-the-loop-review-governance)
+5. [Marketplace](#marketplace)
+6. [Graph Schema](#graph-schema)
+7. [Tech Stack](#tech-stack)
+8. [Repository Structure](#repository-structure)
+9. [Configuration & Autonomous Scheduling](#configuration--autonomous-scheduling)
+10. [Running Locally](#running-locally)
+11. [Testing](#testing)
+12. [Known Limitations & Honest Gaps](#known-limitations--honest-gaps)
+13. [What's Not Built Yet](#whats-not-built-yet)
+14. [License](#license)
 
 ---
 
-## Background & Problem Statement
+## What Kramly Is
 
-The rapid evolution of technology has created thousands of interconnected skills across software engineering, AI, cloud computing, cybersecurity, and data science. Learners consume fragmented resources from courses, documentation, GitHub, blogs, and universities. Technical skills possess complex prerequisite relationships that are rarely modeled systematically.
+Learners consume fragmented resources across courses, documentation, GitHub, blogs, and universities. Technical skills have complex prerequisite relationships that most learning platforms don't model systematically — roadmaps are hand-curated, go stale, and don't adapt to what a specific learner actually knows, forgets, or is running out of time for.
 
-Existing learning platforms rely on manually curated roadmaps that quickly become outdated. They do not automatically discover prerequisite relationships or personalize learning based on a learner's actual knowledge. Traditional educational platforms also provide fixed learning sequences regardless of prior knowledge, performance, career goals, or deadlines — human learning is dynamic, but current systems rarely adapt roadmaps as learner behavior changes.
+Kramly models the structure of knowledge as a directed acyclic graph (Neo4j) — skills as nodes, prerequisites as edges — and computes a personalized ordered learning path from a learner's current knowledge to a target skill. On top of that static-graph traversal sits an agent layer that watches learner state (skill confidence decaying over time, evidence going stale, the same skill repeatedly blocking progress) and decides what to do about it — not just "recompute the path," but chooses between several distinct actions depending on the situation.
 
-**Existing problems this project addresses:**
-
-- Static roadmaps become outdated.
-- Hidden prerequisite gaps remain undetected.
-- Dependencies are manually maintained.
-- Learners study concepts in the wrong order.
-- Recommendation systems optimize engagement rather than learning efficiency.
-- Weak concepts remain hidden from the learner.
-- Recommendations ignore deadlines.
-- Progress tracking rarely changes future learning paths.
-- No continuous optimization of the learning sequence.
-
-**Research gap:** Current systems recommend learning resources ("what to study next"). Kramly instead models the structure of knowledge itself — answering "what must a learner know before studying this concept?" — and determines the optimal _sequence_ of learning based on a continuously evolving learner profile, behaving like a navigation system that recalculates whenever new evidence becomes available.
-
----
-
-## Why This Is Agentic (Not Just RAG)
-
-Kramly is not a retrieval-augmented chatbot answering questions about skills. It is a system that:
-
-- **Maintains state** — a learner's evolving knowledge profile.
-- **Makes autonomous decisions** — recomputing a learning path in response to new evidence (a quiz result, a missed deadline, a decayed skill) without being explicitly asked each time.
-- **Logs its own reasoning** — every re-planning decision records what changed and why, a core agentic-transparency property, not a retrieval property.
-- **(Stretch goal) Governs its own outputs** — in Phase 3, an LLM proposes new graph edges, but a human-in-the-loop gate is required before anything is merged into production data. This models responsible agent-output governance rather than autonomous self-modification.
-- **Does not use LLM fine-tuning** — the project is deliberately built on orchestration, tool-use, graph reasoning, and planning logic rather than training/fine-tuning a model.
+This project went through an honest identity correction partway through development: an earlier version of this agent layer had exactly one action (recompute the path) gated by a single LLM yes/no classification, which is automation with a judgment call bolted on, not agency. The [Agentic Loop](#the-agentic-loop) section below describes what replaced it — a real action space, a grounded LLM controller, and a deterministic fallback for every step, so the system degrades gracefully rather than breaking when no LLM provider is reachable.
 
 ---
 
 ## Architecture
 
-Two layers, built to work together as a cohesive platform rather than isolated applications:
+Four components, backed by one Neo4j Aura graph:
 
-- **Layer 1 — Skill Dependency Graph (the knowledge layer):** a graph database storing skills as nodes and prerequisite relationships as directed edges. Continuously discovers, updates, and reasons over prerequisite relationships extracted from educational resources, enabling accurate identification of knowledge gaps and learner readiness.
-- **Layer 2 — Learning Path Optimizer (the agent layer):** an agent that reads a learner's current knowledge state, traverses the graph, and computes/recomputes an optimal sequence of skills to learn, re-running whenever new evidence arrives (quiz result, forgotten concept, changed deadline) — an adaptive roadmap engine that behaves like a navigation system.
+- **Skill Dependency Graph (Neo4j)** — `Skill` nodes and `PREREQUISITE_OF` edges. Built and extended via `graph/extraction/pipeline.py`, a human-reviewed LLM extraction pipeline (extract → CLI review → load), never auto-merged.
+- **Learning Path Optimizer** (`backend/optimizer/`) — deterministic core. `planner.py` runs Kahn's algorithm for topological sort (with an optional trust-weighted variant that prefers higher-confidence edges), `decay.py` models per-skill confidence decay over time, `calibration.py` fits quality-score weights from outcome data via a hand-written OLS regression.
+- **Agent Layer** (`backend/agent/`) — the reasoning core. `engine.py` orchestrates two independent proactive workflows (the original decay-triggered replan, and the newer full agentic cycle — see below), `reasoning.py` handles path critique/re-sequencing/narration, `llm_client.py` is a Groq-primary/Mistral-fallback client with no vendor SDK dependency, `recommendations.py` deterministically ranks marketplace resources per skill in a path.
+- **Marketplace** (`backend/marketplace/`) — a secondary knowledge-enrichment layer: learners upload resources, the system extracts which skills they cover (LLM-grounded against the real skill list, with a heuristic keyword-matching fallback), detects near-duplicates via embeddings, scores resource quality, and tracks resource supersession over time.
 
-```
-┌─────────────────────────┐        ┌──────────────────────────────┐
-│  Skill Dependency Graph  │◄──────►│  Learning Path Optimizer      │
-│  (Neo4j)                 │        │  (FastAPI + agent logic)      │
-│                           │        │                                │
-│  Skill nodes              │        │  - Reads learner state         │
-│  PREREQUISITE_OF edges    │        │  - Traverses graph              │
-└─────────────────────────┘        │  - Computes ordered path        │
-                                     │  - Triggers on new evidence    │
-                                     │  - Logs every decision          │
-                                     └──────────────────────────────┘
-```
+![Kramly system architecture: a Neo4j Aura skill graph at the center, with the Optimizer, Agent Layer, and Marketplace reasoning over it, an Extraction Pipeline feeding proposed edges through Human-in-the-Loop Review before they ever reach the graph, and a FastAPI backend serving a React + Vite frontend](docs/architecture-diagram.svg)
 
-_(A proper visual architecture diagram is a Phase 5 deliverable — this is a simplified text version for the README.)_
-
-A third component — a **Student Knowledge Marketplace** (transforming uploaded educational content into a semantic knowledge graph, extracting concepts, linking resources, detecting duplicates, evaluating quality) — was considered as a way to continuously enrich the graph with community knowledge, but is **out of scope for the current build** in favor of shipping a focused two-layer MVP first.
+A fifth component, `backend/review/`, is the human-in-the-loop governance layer that sits between the LLM extraction pipeline and the production graph — see [Human-in-the-Loop Review Governance](#human-in-the-loop-review-governance).
 
 ---
 
-## Tech Stack
+## The Agentic Loop
 
-**Flag:** free-tier limits and exact current offerings change often. Verify all of the below on the vendor's current pricing page before committing — I'm not fully certain these are all still accurate as of your build date.
+Before this existed, the agent's entire behavior was: a decay event fires, one LLM call classifies whether to replan (yes/no), and if yes, the only thing that ever happened was a path recompute. That's real LLM judgment, but over exactly one action — a navigation-system reroute with vocabulary borrowed from agent design, not the thing itself.
 
-| Component                | Suggested Free Option                                                               | Note                                                                                                                  |
-| ------------------------ | ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Graph database           | Neo4j Aura Free tier, or self-hosted Neo4j Community Edition                        | Verify current Aura free-tier node/relationship limits                                                                |
-| Backend/API              | Python (FastAPI) or Node.js                                                         | Your choice based on comfort                                                                                          |
-| Agent orchestration      | LangGraph, or hand-rolled state machine                                             | I am not fully certain of LangGraph's current exact API — verify against official docs before writing code against it |
-| LLM calls (Phase 3 only) | Free-tier from a provider (e.g., Groq, Google Gemini free tier) or local via Ollama | I do not have verified current free-tier limits for any of these — check each provider's pricing page directly        |
-| Hosting                  | AWS EC2 (see [AWS EC2 Deployment Plan](#aws-ec2-deployment-plan))                   | Free tier exists but has strict limits and a time window — verify current terms before relying on it                  |
-| CI/CD                    | GitHub Actions                                                                      | Free tier for public repos, generous free minutes for private repos as of my knowledge — verify current limits        |
-| Frontend (optional)      | React + a graph visualization library (e.g., react-force-graph or Cytoscape.js)     | Verify current library names/APIs — I am not fully certain these libraries' APIs haven't changed                      |
+**The current design (`backend/agent/actions.py`, `observation.py`, `controller.py`, `executor.py`)** gives the agent a real, closed action space and a genuine observe-reason-act loop:
+
+- **Observe** (`observation.py`) — builds a full picture of a learner: which skills have decayed, which skills keep reappearing in replans without ever being resolved (detected from decision history — a pattern a single-action system has no way to notice), which known skills have evidence old enough to be untrustworthy, and which marketplace resources are actually available for the skills that need help.
+- **Reason** (`controller.py`) — deterministically generates a list of candidate actions from that observation (never lets the LLM invent an action or target a skill that isn't already justified by real data), then either lets an LLM choose among them with a stated justification, or — if the LLM proposes something outside the candidate list, or no provider is configured — falls back to a fixed priority order. This grounding pattern mirrors what `marketplace/ingestion.py` already does for concept extraction: propose freely, filter against ground truth.
+- **Act** (`executor.py`) — dispatches the chosen action to a handler wired to existing capabilities (the planner for a recompute, the marketplace's resource lookup for a recommendation) and returns a structured outcome.
+
+**The action space (`ActionType` in `actions.py`):**
+
+| Action | What it does |
+|---|---|
+| `RECOMPUTE_PATH` | Recalculates the learning path (the original, only-ever-existed behavior) |
+| `RECOMMEND_RESOURCE` | Surfaces a specific marketplace resource for a weak or stuck skill |
+| `FLAG_FOR_REINFORCEMENT` | Flags a decayed skill that has no available resource yet |
+| `REQUEST_EVIDENCE` | Flags a known skill whose confidence is based on stale evidence |
+| `ESCALATE_STUCK_LEARNER` | Flags a skill that has blocked replanning repeatedly without resolving |
+| `NO_ACTION` | Explicitly does nothing — always offered, never skipped, since a real agent must be able to conclude nothing needs doing |
+
+Honest scope note: `RECOMMEND_RESOURCE` / `REQUEST_EVIDENCE` / `FLAG_FOR_REINFORCEMENT` / `ESCALATE_STUCK_LEARNER` produce a structured, logged recommendation, not an external side effect — there is no notification/email system in this project, and faking one would misrepresent what the code does. `RECOMPUTE_PATH` is the one action that changes stored state.
+
+Both proactive workflows run independently on their own scheduler jobs (`AgentScheduler.run_now()` for the original decay-triggered replan, `AgentScheduler.run_agentic_cycle()` for the new loop) — the new one is additive, not a replacement, so it can never regress the old, simpler behavior even if something about the new path is wrong.
+
+Every agentic cycle is persisted as an `AgenticDecision` node (what was observed, what was chosen and why, what executing it produced) — separate from the original `Decision` log so existing consumers of that log are unaffected. Viewable via `GET /agentic-decision-log/{learner_id}` or the "Agentic Reasoning Trace" card on the frontend's Audit Log page.
+
+This is validated by 32 dedicated tests (`backend/tests/test_agentic_loop.py`), including a direct proof that three different learner situations (a stuck skill, an available-but-unused resource, stale evidence) produce three genuinely different chosen actions — not the same recompute every time.
+
+---
+
+## Human-in-the-Loop Review Governance
+
+`backend/review/` is the gate between the LLM graph-extraction pipeline and the production Neo4j data: candidate `PREREQUISITE_OF` edges go through a strict `PENDING → APPROVED/REJECTED` state machine, and even an approved candidate is re-checked for cycles immediately before merge — trust but verify. Every state transition is logged to a structured audit trail, viewable at `GET /review/history`.
+
+**Known limitation, stated plainly:** the candidate store (`_CANDIDATE_STORE` in `review/service.py`) is in-memory, not persisted to Neo4j — a restart clears the review queue. This is a deliberate isolation choice (nothing touches production graph data until MERGED) but it does mean pending candidates don't survive a restart; that's a real gap, not a hidden one.
+
+---
+
+## Marketplace
+
+Learners can upload resources (notes, projects, flashcards, interview experiences, research summaries). Ingestion (`marketplace/ingestion.py`) hashes content for exact-duplicate detection, stores it via a pluggable storage backend, and runs LLM-grounded concept extraction — the model is given the actual list of valid skill IDs and may only match against it, with any hallucinated skill ID filtered out before linking. Near-duplicate detection (`marketplace/discovery.py`) compares embeddings via cosine similarity. Quality scoring (`marketplace/quality.py`) combines peer rating, recency, and claimed-vs-confirmed skill coverage into a single score, with weights that can be replaced by `optimizer/calibration.py`'s outcome-fitted values once enough real (or synthetic bootstrap) outcome data exists.
+
+**Known limitation:** the embedding provider falls back to a deterministic hash-based mock vector if no Mistral API key is configured or the call fails — real similarity detection requires a working Mistral key.
 
 ---
 
 ## Graph Schema
 
-This is a proposed schema, not a verified industry standard — adjust based on your actual data.
+Reflects the actual Neo4j data model, not a proposal.
 
-**Node: Skill**
+**Nodes:** `Skill {id, name, domain, difficulty_level}` · `Learner {id, target_skill, deadline}` · `Resource {id, title, type, author_id, upload_date, content_hash, storage_key, status, quality_score, embedding}` · `Author {id}` · `Decision {...}` (original replan log) · `AgenticDecision {...}` (new observe-reason-act trace) · `CalibrationState {id: 'quality_weights', weight_peer_rating, weight_recency, weight_completeness, sample_count, calibrated_at, source}` · `SyntheticOutcome` (clearly-tagged calibration bootstrap data, not real usage — see [Known Limitations](#known-limitations--honest-gaps)).
 
-- `id`
-- `name`
-- `domain` (e.g., "ML", "Web Dev")
-- `difficulty_level` (optional)
+**Relationships:** `(Skill)-[:PREREQUISITE_OF {crowd_confidence}]->(Skill)` · `(Learner)-[:KNOWS {confidence, last_practiced}]->(Skill)` · `(Learner)-[:HAD_DECISION]->(Decision)` · `(Learner)-[:HAD_AGENTIC_DECISION]->(AgenticDecision)` · `(Resource)-[:AUTHORED_BY]->(Author)` · `(Resource)-[:COVERS_CONCEPT {relevance_score, evidence_snippet}]->(Skill)` · `(Author)-[:RATED {score}]->(Resource)` · `(Resource)-[:SIMILAR_TO {similarity_score}]->(Resource)` · `(Resource)-[:SUPERSEDES]->(Resource)`.
 
-**Edge: PREREQUISITE_OF**
+`crowd_confidence` on `PREREQUISITE_OF` edges is a corroboration signal (how many distinct authors' resources cover both endpoint skills), not a discovery mechanism — it doesn't create new prerequisite relationships, only adds trust weighting to edges that already exist.
 
-- `from_skill_id`
-- `to_skill_id`
-- `strength` (optional — how strict the prerequisite is; not all prerequisites are equally mandatory)
-- `source` (`manual` / `extracted` — important for Phase 3 traceability)
+---
 
-**Node: Learner** (added in Phase 1 for state tracking)
+## Tech Stack
 
-- `id`
-- `known_skills` (list, with confidence/decay metadata)
-- `target_skill`
-- `deadline` (optional)
+| Component | What's actually used |
+|---|---|
+| Graph database | Neo4j Aura (cloud) — this project targets Aura only, no self-hosted option |
+| Backend | Python, FastAPI, pydantic / pydantic-settings |
+| Agent orchestration | Hand-rolled (no LangGraph/agent framework dependency) — dependency-injected pure functions throughout, see `agent/engine.py`, `agent/controller.py` |
+| LLM calls | Groq (primary), Mistral (fallback) via raw `httpx` REST calls — no vendor SDK |
+| Autonomous scheduling | APScheduler `BackgroundScheduler`, 4 independent jobs (see [Configuration & Autonomous Scheduling](#configuration--autonomous-scheduling)) |
+| Frontend | React + Vite, React Router, Swiss International Style design system |
+| Testing | pytest, 189 tests total |
+
+**Flag:** vendor pricing/free-tier terms change often — verify Neo4j Aura's and Groq's/Mistral's current terms on their own pricing pages before relying on them for a production deployment.
 
 ---
 
 ## Repository Structure
 
-**This is a proposed structure, not yet an existing/verified one** — adjust it once you've made concrete tooling decisions (e.g., Python vs. Node, monorepo vs. split repos). I'm presenting this as a reasonable starting layout, not a fact about your actual codebase.
+This reflects the actual current layout.
 
 ```
 kramly/
 ├── README.md
-├── .gitignore
-├── .env.example
-├── requirements.txt              # or package.json if using Node
+├── .env / env.example
 │
-├── graph/                        # Layer 1 — Skill Dependency Graph
-│   ├── schema/
-│   │   └── schema_definitions.md
-│   ├── seed_data/
-│   │   ├── skills.csv
-│   │   └── prerequisites.csv
-│   ├── load_graph.py             # script to populate Neo4j from seed data
-│   └── extraction/                # Phase 3 stretch goal
-│       ├── extract_candidates.py
-│       └── review_interface/
+├── graph/                          # Skill Dependency Graph layer
+│   ├── db.py                       # shared Aura connection helper
+│   ├── load_all_domains.py         # seed-data loader
+│   ├── seed_data/                  # per-domain skill/prerequisite CSVs
+│   └── extraction/
+│       └── pipeline.py             # extract → review (CLI) → load, human-gated
 │
-├── optimizer/                    # Layer 2 — Learning Path Optimizer (agent)
-│   ├── traversal.py               # core pure traversal/optimizer function
-│   ├── decay_model.py             # Phase 2 forgetting model
-│   ├── replanning_triggers.py     # Phase 2 event handling
-│   └── decision_log.py            # agentic reasoning transparency log
+├── backend/
+│   ├── main.py                     # FastAPI app, CORS, lifespan, background jobs
+│   ├── app/                        # config, database, graph reads, knowledge state, decay scan, decision log persistence
+│   ├── optimizer/                  # planner (Kahn's algorithm), decay model, calibration (OLS)
+│   ├── agent/                      # actions, observation, controller, executor, engine, reasoning, llm_client, models, recommendations
+│   ├── marketplace/                # ingestion, discovery, quality, storage, embeddings, api
+│   ├── review/                     # human-in-the-loop governance (models, service)
+│   ├── api/                        # routes.py, review_routes.py
+│   ├── models/                     # request/response Pydantic models
+│   ├── scripts/                    # generate_synthetic_usage.py
+│   └── tests/                      # 189 tests
 │
-├── api/                          # FastAPI (or equivalent) layer
-│   ├── main.py
-│   ├── routes/
-│   │   ├── path.py
-│   │   └── learner.py
-│   └── models/                    # request/response schemas
-│
-├── tests/
-│   ├── test_traversal.py
-│   ├── test_replanning.py
-│   └── test_api_integration.py
-│
-├── infra/                        # Phase 4 — AWS EC2 deployment
-│   ├── deploy.sh
-│   ├── systemd/
-│   │   └── kramly.service
-│   ├── nginx/
-│   │   └── kramly.conf
-│   └── github-actions/
-│       └── deploy.yml
-│
-├── frontend/                     # optional
-│   └── (React app, if built)
-│
-└── docs/
-    ├── architecture-diagram.png   # Phase 5 deliverable
-    ├── novelty-verification.md
-    └── demo-notes.md
+└── frontend/
+    └── src/
+        ├── api/client.js
+        ├── components/             # LearnerForm, PathResult, GraphVisualization, DecisionLogHistory, AgenticDecisionLog, MarketplacePanel, ...
+        └── pages/                  # Home, LearningPath, Marketplace, AuditLog, SkillGraph
 ```
 
 ---
 
-## Detailed Phase-Wise Plan
+## Configuration & Autonomous Scheduling
 
-**How to read this section:** phases are milestone-based, not fixed to specific week counts. Each phase lists tasks, deliverables, and a "verify before building" note where current tool syntax/limits are not something I can guarantee. Treat every such flag as a real instruction to check current docs, not a formality.
+Every tunable constant in the codebase — LLM temperature/max_tokens per call site, decay rate, quality-score weights, trust-weighting parameters, discovery/similarity thresholds, storage backend, CORS origins, scheduler intervals, agentic-observation thresholds (evidence staleness window, stuck-skill detection window/threshold) — lives in `backend/app/config.py`'s `Settings` (pydantic-settings `BaseSettings`, 46 fields), not scattered as module-level literals. Every field has a documented default and is overridable via environment variable or `.env`.
 
-### Phase 0 — Setup & Foundations
+Four autonomous background jobs run via APScheduler once the backend starts (`main.py::_start_background_jobs`), independently of any API call:
 
-**Goal:** Environment ready, no ambiguity left before feature code is written.
+| Job | Default interval | What it does |
+|---|---|---|
+| `decay_scan` | 60 min | Original decay-triggered replan-only workflow (`AgentScheduler.run_now`) |
+| `agentic_cycle` | 60 min | The full observe-reason-act loop (`AgentScheduler.run_agentic_cycle`) |
+| `crowd_confidence_rescan` | 1440 min (daily) | Recomputes crowd-corroboration signal on every `PREREQUISITE_OF` edge |
+| `quality_calibration` | 1440 min (daily) | Refits marketplace quality-score weights from outcome data, if enough samples exist |
 
-1. Create/confirm your AWS account and check the Billing/Free Tier dashboard directly, so you know your actual free-tier status before relying on it.
-2. Decide your backend language (Python/FastAPI recommended given the AI/data ecosystem, but Node.js is equally valid).
-3. Set up local dev environment: virtual environment (or Node equivalent), Git repo, `.gitignore`, basic project structure.
-4. Install Neo4j locally (Community Edition, free) for development.
-5. Set up a GitHub repo with branch protection basics and a README skeleton.
-6. **Verify before building:** current FastAPI installation/quickstart steps and current Neo4j Desktop/Community download + local connection steps from their respective official docs.
-
-**Deliverable:** A working local environment where you can start a FastAPI server and connect to a local Neo4j instance and run a basic query.
-
-### Phase 1 — MVP: Seeded Graph + Basic Optimizer Agent
-
-**Goal:** A working end-to-end demo: static graph in, learner state in, ordered learning path out.
-
-**1.1 Data modeling**
-
-- Finalize the graph schema.
-- Pick ONE domain you can personally validate for correctness (e.g., "Python → Data Structures → Algorithms → ML Basics → Deep Learning" or a web-dev stack).
-- Hand-curate 30–80 skill nodes and their prerequisite edges as structured data (CSV/JSON) before touching the database.
-
-**1.2 Graph database population**
-
-- Write a script to load the CSV/JSON into Neo4j (Cypher `CREATE`/`MERGE` statements, or a Python driver script).
-- **Verify before building:** the current Neo4j Python driver's exact import and connection syntax from Neo4j's official driver docs.
-- Manually inspect the graph in Neo4j's browser UI to confirm structure before writing application code against it.
-
-**1.3 Core traversal/optimizer logic**
-
-- Implement the core algorithm: given a learner's known-skills set and a target skill, compute an ordered path (topological sort / shortest-path over a DAG — confirm your graph is actually acyclic).
-- Write this as a pure, testable function first, separate from any API/agent wrapper.
-- **Verify before building:** whether to implement traversal in Python (e.g., `networkx` — confirm current API) versus a native Cypher path-finding query (confirm current syntax from Neo4j's docs).
-
-**1.4 API layer**
-
-- Build FastAPI (or equivalent) endpoints: submit known skills + target skill → receive ordered path.
-- Add input validation and error handling (invalid skill IDs, unreachable targets, etc.).
-
-**1.5 Minimal agent framing**
-
-- Wrap the optimizer logic as an "agent" with an explicit decision log — every computed path logs its inputs and reasoning. This is the seed of the "agentic reasoning transparency" story for interviews.
-
-**1.6 Testing**
-
-- Unit tests for traversal logic edge cases (no path exists, learner already knows everything, cyclic data caught and rejected).
-- Basic integration test hitting the API end-to-end.
-
-**Deliverable:** A working local API that takes learner state + target skill and returns a valid ordered learning path, with logs and tests.
-
-### Phase 2 — Adaptive Re-Planning
-
-**Goal:** Move from static to dynamic — the system reacts to new evidence.
-
-**2.1 Knowledge state tracking**
-
-- Record "evidence" of learning: quiz results, self-report checkboxes, or both.
-- Store per-skill confidence/mastery state on the Learner node or a related table.
-
-**2.2 Decay/forgetting model**
-
-- Implement a decay function: skills unused for N days reduce in confidence.
-- **Flag:** there is no single verified "standard" formula to hand you off the shelf. Spaced-repetition systems like Anki's SM-2 algorithm are a real, documented reference point, but confirm the actual formula from Anki's own documentation rather than from memory — I am not fully certain I would reproduce it correctly.
-- A basic linear or exponential decay you define yourself is a legitimate MVP choice.
-
-**2.3 Re-planning triggers**
-
-- Define concrete trigger events: quiz completed, decay threshold crossed, deadline changed, new target skill set.
-- Implement an event handler that calls the Phase 1 optimizer again on trigger, and diffs the new path against the old one.
-
-**2.4 Decision logging (expanded)**
-
-- Log _what changed_ between the old path and new path, and _why_ (which trigger fired) — a strong demoable feature.
-
-**2.5 Testing**
-
-- Test that re-planning is idempotent (running it twice on unchanged state doesn't produce a different or duplicated result).
-
-**Deliverable:** A system that behaves like a "navigation system" for learning — recalculating when new evidence arrives, with a visible reasoning trail.
-
-### Phase 3 — Semi-Automated Graph Extraction (Stretch Goal)
-
-**Goal:** Reduce manual graph-building effort using LLM-assisted extraction, with human review as a hard gate.
-
-**3.1 Source selection**
-
-- Choose ONE text source type (e.g., open syllabi, public curricula, documentation). Confirm you're legally permitted to use/scrape it — check the source's terms of service yourself.
-
-**3.2 Extraction pipeline**
-
-- Use an LLM (local via Ollama, or a free-tier hosted API) to propose candidate prerequisite relationships from source text.
-- **Verify before building:** current setup/API syntax for whichever LLM access method you choose, and current free-tier limits, directly from the provider.
-- Output candidate edges in a reviewable format (proposed edge, source text snippet, confidence).
-
-**3.3 Human-in-the-loop review**
-
-- Build a simple review interface (a basic web form or CLI tool is fine) where candidate edges are approved/rejected before merging into the production graph.
-- Never auto-merge LLM output directly — this is a deliberate design choice demonstrating agent-output governance.
-
-**3.4 Merge and re-validate**
-
-- After approval, merge new edges into the graph and re-run cycle-detection (the Phase 1.3 acyclic-structure assumption must hold).
-
-**Deliverable:** A working (even if narrow/small-scale) semi-automated pipeline that expands the graph with human oversight.
+Set `SCHEDULER_ENABLED=false` to run the API with no autonomous background jobs (used in tests).
 
 ---
 
-## AWS EC2 Deployment Plan
+## Running Locally
 
-**Goal (Phase 4):** Move from "working on my laptop" to a deployed, observable, cost-controlled system.
+```bash
+# Backend
+cd backend
+pip install -r requirements.txt   # includes apscheduler
+uvicorn main:app --reload         # http://127.0.0.1:8000/docs for Swagger UI
 
-**Uncertainty flag upfront:** AWS's free tier terms (which instance types qualify, the duration, and the monthly hour caps) have changed over time and are not something I can guarantee are current. Verify directly on AWS's official free tier page before launching anything.
+# Seed the graph if empty
+cd graph
+python load_all_domains.py
 
-**4.1 Pre-deployment checklist**
+# Frontend
+cd frontend
+npm install
+npm run dev
+```
 
-- Confirm AWS free-tier status directly in your Billing dashboard.
-- Decide: Neo4j on the same EC2 instance vs. Neo4j Aura free tier separately.
-
-**4.2 EC2 setup**
-
-- Launch instance (verify current free-tier-eligible instance type and AMI in the AWS console at launch time — do not assume `t2.micro`/`t3.micro` is still accurate without checking).
-- Configure Security Group to allow inbound traffic only on needed ports (22 for SSH, 80/443 for web traffic, your API port).
-- Set up SSH key access; consider disabling password auth per current AWS/Ubuntu hardening guidance (verify from official docs).
-
-**4.3 Graph database placement**
-
-- **Option A:** Run Neo4j Community Edition directly on the same EC2 instance — simpler, but the instance does double duty as app server + database.
-- **Option B:** Run Neo4j Aura's free tier separately, with the EC2-hosted API connecting over the network — cleaner separation of concerns, closer to real production architecture. This is a judgment call, not a fact — decide based on what you want to demonstrate.
-
-**4.4 App deployment on the instance**
-
-- `systemd` service files (to keep the API running after reboot/disconnect) or Docker. Verify current best-practice guidance in AWS's own EC2 documentation rather than assuming.
-- Set environment variables/secrets securely (never commit them to Git) — a `.env` file excluded via `.gitignore`, or AWS Systems Manager Parameter Store for a more advanced setup (verify current setup steps from AWS's own docs).
-
-**4.5 CI/CD to EC2**
-
-- GitHub Actions can SSH into the instance and redeploy on push. Verify the current, actively maintained SSH-deploy action on the GitHub Marketplace before wiring this up — I don't want to hand you a specific action name I can't confirm is current and maintained.
-
-**4.6 Observability & cost control**
-
-- Extend decision logs with system-level logs (errors, response times).
-- Set up AWS Budgets with a low-dollar alert threshold so an instance left running doesn't silently accrue charges once free-tier hours or the window are exhausted.
-- Optional: a simple `/health` endpoint for uptime checks.
-
-**4.7 Domain/HTTPS (optional, for polish)**
-
-- Nginx as reverse proxy, with a free TLS certificate (Let's Encrypt / Certbot is the standard free option, though verify current setup steps from Certbot's own docs).
-
-**Deliverable:** A live, publicly accessible (or demo-able) deployment on AWS EC2, with basic cost controls and observability in place.
+Requires a `.env` at the project root with `NEO4J_URI`, `NEO4J_USERNAME`/`NEO4J_USER`, `NEO4J_PASSWORD`, and optionally `GROQ_API_KEY`/`MISTRAL_API_KEY` (the system runs on deterministic fallbacks everywhere an LLM call would otherwise happen, but the "agentic" behavior is much thinner without a real provider configured). See `env.example` for every optional setting.
 
 ---
 
-## Production-Grade Design Decisions
+## Testing
 
-Based on general software engineering practice (not a cited source, just standard practice), this project is explicitly designed to go beyond a basic demo:
-
-1. **Structured logging** of every agent decision — what the optimizer changed and why.
-2. **Idempotency** — re-running the optimizer on the same state shouldn't produce inconsistent results or duplicate graph writes.
-3. **Human-in-the-loop gating** for any graph edits from Phase 3's LLM extraction — never auto-merge.
-4. **Automated tests** for the graph traversal logic — pure algorithmic code, very testable, a real strength point for a portfolio.
-5. **CI/CD deployment**, not manual deploys.
-6. **Observability** — even a simple dashboard showing graph size, number of re-plans triggered, etc.
-7. **Cost control** — AWS Budgets alerting on the deployment infrastructure.
+189 tests (`cd backend && python -m pytest`). As of the last full run: **186 passed, 3 failed** — the 3 failures are `tests/test_integration.py` tests that require a live Neo4j Aura connection and fail in any environment without one configured; they are not flaky unit tests. Run `pyflakes` alongside `pytest` if you touch LLM-facing code — it catches undefined-name bugs (e.g. a truncated variable reference) that `ast.parse`/syntax checks alone miss.
 
 ---
 
-## Team & Work Split
+## Known Limitations & Honest Gaps
 
-Two-person team, phase-based split restructured into **parallel, thematic tracks** rather than strict sequential phase ownership — a strict "one person does Phases 0-2 while the other waits" approach would leave one person idle for a long stretch, since Phase 3/4 work depends on Phase 1/2 output existing. Both people work within every phase, on different tracks, in parallel.
+Stated directly rather than left for someone else to discover:
 
-### Phase 0 (Both, in parallel)
-
-- **Person A:** AWS account setup, Billing/Free Tier dashboard check, GitHub repo creation, branch protection, README skeleton.
-- **Person B:** Local dev environment, Neo4j Community Edition local install, verify local connection works.
-- **Together:** Agree on the graph schema before either writes code against it.
-
-### Phase 1
-
-- **Person A — Data/Graph track:** domain selection, hand-curating skill nodes/edges, load script, manual graph validation.
-- **Person B — Logic/API track:** core traversal/optimizer function, FastAPI endpoints, unit tests.
-- **Together, at the end:** integration test — A's data through B's logic, end to end.
-- _Dependency note:_ B can build/test against a small dummy graph while A finishes the full dataset — B is not blocked.
-
-### Phase 2
-
-- **Person A — State/Data track:** knowledge state tracking, decay/forgetting model.
-- **Person B — Agent/Logic track:** re-planning trigger logic, decision logging, idempotency tests.
-- _Dependency note:_ these tracks run mostly in parallel until wired together at phase end.
-
-### Phase 3 (stretch goal)
-
-- **Person A — Extraction track:** source selection, legal/ToS check, LLM extraction pipeline.
-- **Person B — Review/Governance track:** human-in-the-loop review interface, merge pipeline, cycle-detection re-runs.
-- _Dependency note:_ B's review interface can be built/tested against fake candidate edges before A's real pipeline is done.
-
-### Phase 4
-
-- **Person A — Infra track (can start as early as Phase 1):** EC2 launch, Security Group config, SSH setup, Neo4j placement decision, AWS Budgets alert (set up early).
-- **Person B — Deployment/CI track:** Docker/`systemd` setup, GitHub Actions CI then CD, reverse proxy/HTTPS if doing the polish step.
-- _Recommendation:_ whoever is more comfortable with Linux/networking should lean toward Infra — with roughly even skill levels, this is genuinely a coin-flip; pick based on interest.
-
-### Phase 5 (Both, together)
-
-- Architecture diagram — split (one draws data flow, one writes explanation) or whoever is stronger visually.
-- README — write together or split sections.
-- Demo video — whoever is more comfortable presenting/recording; the other preps the demo script.
-- Novelty-verification write-up — done together, since it requires agreement on what was searched and found.
-
-### Overall thematic grouping
-
-- **Person A leans toward:** Data/Graph (P1), State/Data (P2), Extraction (P3), Infra (P4).
-- **Person B leans toward:** Logic/API (P1), Agent/Logic (P2), Review/Governance (P3), Deployment/CI (P4).
-
-_(Team member names to be filled in once assigned — I have no basis to assign these.)_
+- **Calibration runs on synthetic data only.** `optimizer/calibration.py`'s outcome-fitted quality weights are currently calibrated exclusively against `:SyntheticOutcome` bootstrap nodes (`scripts/generate_synthetic_usage.py`). The regression math is independently verified correct, but a correct fit on synthetic data is not evidence the resulting weights are better than the static defaults in the real world. Delete `:SyntheticOutcome` nodes once real usage data exists.
+- **No authentication anywhere.** Every API endpoint is unauthenticated. The marketplace's rating endpoint currently receives a hardcoded `"student_user"` author ID from the frontend rather than a real identity.
+- **Cloud storage backend is unimplemented.** `storage_backend` supports `"local"` only; `"cloud"` is a documented but unbuilt option.
+- **The review governance queue is in-memory**, not Neo4j-persisted — see [Human-in-the-Loop Review Governance](#human-in-the-loop-review-governance).
+- **Decay rate, quality-score weights (pre-calibration), and trust-weighting formulas are original heuristics**, not citations of published research (spaced-repetition literature like Anki's SM-2 or Duolingo's half-life regression are real, relevant reference points if you want to make this rigorous, but nothing in this codebase currently implements or validates against them).
+- **The `RECOMMEND_RESOURCE`/`REQUEST_EVIDENCE`/`FLAG_FOR_REINFORCEMENT`/`ESCALATE_STUCK_LEARNER` actions have no external side effect** — no notification or messaging system exists, so these produce a logged recommendation a human has to go look at, not a proactive nudge to the learner.
+- **`graph/extraction/pipeline.py` is a manual, human-run CLI tool**, not something that runs automatically — extending the graph with new content requires someone to run `extract` → `review` → `load` themselves.
 
 ---
 
-## Open Questions
+## What's Not Built Yet
 
-1. Which domain should the seed graph cover first?
-2. What counts as "evidence" of learner knowledge in Phase 1 — quizzes, self-report, or platform integration?
-3. Is a frontend/UI part of the MVP, or is a backend + API demo sufficient for now?
-4. For Phase 3, which specific text sources are legally/practically permitted to use? (Some platforms restrict scraping in their ToS — check before building an extraction pipeline against a specific site.)
-5. Do you already have an AWS account with free tier active, or is this a new account? (Affects whether the "free" assumptions in the deployment plan hold.)
-
----
-
-## Roadmap Status
-
-| Phase                          | Status      |
-| ------------------------------ | ----------- |
-| Phase 0 — Setup                | Not started |
-| Phase 1 — MVP                  | Not started |
-| Phase 2 — Adaptive Re-Planning | Not started |
-| Phase 3 — Extraction (stretch) | Not started |
-| Phase 4 — AWS EC2 Deployment   | Not started |
-| Phase 5 — Portfolio Polish     | Not started |
-
-_(Update this table as work progresses.)_
-
----
-
-## Novelty Verification
-
-There is no verified source confirming that no existing production system already does automated prerequisite-graph extraction combined with continuous re-planning. Before presenting this project as novel to companies or in interviews, search Google Scholar, arXiv, and Papers with Code for terms like "prerequisite relation extraction," "concept dependency graph," and "adaptive learning path planning," and fill in the findings below.
-
-_Format to fill in:_
-
-> "We searched for [specific terms] on [specific sources] and found the closest prior work is [specific system/paper], which differs from Kramly because [specific technical difference]."
-
----
-
-## Notes, Assumptions & Things to Verify
-
-- Free-tier limits for AWS, Neo4j Aura, GitHub Actions, and any LLM provider used in Phase 3 should be verified directly against each vendor's current pricing page.
-- The decay/forgetting formula in Phase 2 is not a verified standard formula — confirm any referenced spaced-repetition algorithm (e.g., SM-2) from its original documentation before implementing.
-- Library APIs referenced (Neo4j Python driver, LangGraph, graph visualization libraries, GitHub Actions deploy actions) should be checked against current official docs before writing code against them.
-- The repository structure above is a proposed starting layout, not a fact about an existing codebase — adjust once concrete tooling decisions are made.
-- This README is a living document and should be updated as architecture decisions are finalized (final Neo4j hosting choice, final LLM provider for Phase 3, final seed-graph domain, final team member names).
+- **CI/CD.** No GitHub Actions workflow exists yet (no `.github/workflows/`). Tests must be run manually.
+- **Deployment.** The project runs locally only; no AWS EC2 (or other hosting) deployment has been done. If/when this happens, Neo4j Aura's free tier (separate from wherever the API is hosted) is the intended graph database placement — verify current AWS free-tier terms directly on AWS's billing dashboard before relying on them, as these change over time.
+- **Real usage data.** Nothing in this project has been calibrated, validated, or load-tested against real learners yet — every "adaptive" or "calibrated" claim in this README is honest about running on synthetic or hand-constructed data until that changes.
 
 ---
 
 ## License
 
-_(To be decided by the team — e.g., MIT, Apache 2.0. Add the chosen license file to the repo root.)_
+MIT — see [LICENSE](LICENSE). Chosen because this is a solo, personal project with no commercial product to protect: MIT is the simplest permissive option, imposes no restriction on how others use or build on the code, and is the license reviewers/employers recognize on sight without needing to read it.

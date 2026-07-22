@@ -68,7 +68,7 @@ class CycleDetected(PlannerError):
     """Raised when a cycle is found in the prerequisite graph.
 
     A cycle means the graph is **not** a DAG and topological sorting is
-    impossible.  This should never happen if Person A's data is correct,
+    impossible.  This should never happen if the graph data is correct,
     but we detect it defensively rather than looping forever.
 
     Attributes

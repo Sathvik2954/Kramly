@@ -54,7 +54,7 @@ export default function LearnerConfigForm({ learnerId, onAction, loading }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       {statusMessage && (
-        <div style={{ padding: "0.75rem", backgroundColor: "var(--accent-success-bg)", border: "1px solid var(--accent-success)", borderRadius: "6px", fontSize: "0.85rem", color: "var(--text-primary)" }}>
+        <div style={{ padding: "0.75rem", backgroundColor: "var(--accent-success-bg)", border: "var(--border-w) solid var(--border-color)", fontSize: "0.85rem", color: "var(--text-primary)" }}>
           {statusMessage}
         </div>
       )}
@@ -65,9 +65,9 @@ export default function LearnerConfigForm({ learnerId, onAction, loading }) {
       )}
 
       {/* Target Config Form */}
-      <form onSubmit={handleTargetSubmit} className="form-container" style={{ borderBottom: "1px solid var(--border-color)", paddingBottom: "1.5rem" }}>
-        <h3 style={{ fontSize: "1rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Set Target Profile</h3>
-        
+      <form onSubmit={handleTargetSubmit} className="form-container" style={{ borderBottom: "1px solid var(--color-grey-mid)", paddingBottom: "1.5rem" }}>
+        <h3 className="section-title" style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Set Target Profile</h3>
+
         <div className="input-group">
           <label htmlFor="config-target-input">Target Skill ID</label>
           <input
@@ -100,8 +100,8 @@ export default function LearnerConfigForm({ learnerId, onAction, loading }) {
 
       {/* Quiz Evidence Form */}
       <form onSubmit={handleEvidenceSubmit} className="form-container">
-        <h3 style={{ fontSize: "1rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>Record Quiz / Evidence</h3>
-        
+        <h3 className="section-title" style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Record Quiz / Evidence</h3>
+
         <div className="input-group">
           <label htmlFor="config-skill-input">Practiced Skill ID</label>
           <input
@@ -125,7 +125,7 @@ export default function LearnerConfigForm({ learnerId, onAction, loading }) {
             step="0.05"
             value={confidence}
             onChange={(e) => setConfidence(parseFloat(e.target.value))}
-            style={{ width: "100%", height: "6px", cursor: "pointer", accentColor: "var(--accent-primary)" }}
+            style={{ cursor: "pointer" }}
             disabled={loading || submittingEvidence}
           />
         </div>

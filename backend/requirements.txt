@@ -12,7 +12,8 @@ neo4j==6.2.0
 
 # --- Utilities ---
 python-dotenv==1.0.1
-ollama>=0.2.0
+httpx>=0.27.0   # used directly for Groq/Mistral chat-completion calls (agent/llm_client.py)
+apscheduler==3.11.3   # autonomous background scheduler (decay scan + crowd-confidence rescan, main.py)
 
 # --- Testing (dev only) ---
 pytest==9.1.1

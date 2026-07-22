@@ -275,3 +275,98 @@ class TestPrerequisiteOrdering:
             assert path.index(prereq) < path.index(dependent), (
                 f"'{prereq}' should come before '{dependent}' in {path}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 9. Trust-aware mode (moved here from the former test_trust_weighting.py —
+#    these test optimizer.planner directly, not the trust-weighting formulas,
+#    so they belong with the rest of the planner tests.)
+# ---------------------------------------------------------------------------
+
+class TestPlannerTrustAwareMode:
+    """Verify that trust-aware mode correctly uses edge weights."""
+
+    def test_trust_aware_reorders_based_on_confidence(self, fake_graph):
+        """High-confidence edges should be preferred in ordering."""
+        weights = {
+            ("web02", "web03"): 10.0,
+            ("web02", "web07"): 0.1,
+            ("web03", "web04"): 10.0,
+            ("web03", "web05"): 10.0,
+            ("web04", "web08"): 10.0,
+            ("web05", "web08"): 10.0,
+            ("web07", "web08"): 0.1,
+        }
+        path = generate_learning_path(
+            known_skills=["web01", "web02"],
+            target_skill="web08",
+            edge_weights=weights,
+            **fake_graph,
+        )
+        assert path.index("web07") < path.index("web03"), (
+            "web07 should come first due to lower cost"
+        )
+
+    def test_trust_aware_same_skills_as_standard(self, fake_graph):
+        """Trust-aware mode should include the same set of skills."""
+        path_standard = generate_learning_path(
+            known_skills=["web01", "web02"],
+            target_skill="web08",
+            **fake_graph,
+        )
+        weights = {
+            ("web02", "web03"): 5.0,
+            ("web02", "web07"): 0.5,
+            ("web03", "web04"): 5.0,
+            ("web03", "web05"): 5.0,
+            ("web04", "web08"): 5.0,
+            ("web05", "web08"): 5.0,
+            ("web07", "web08"): 0.5,
+        }
+        path_trust = generate_learning_path(
+            known_skills=["web01", "web02"],
+            target_skill="web08",
+            edge_weights=weights,
+            **fake_graph,
+        )
+        assert set(path_standard) == set(path_trust)
+
+    def test_trust_aware_preserves_hard_prerequisites(self, fake_graph):
+        """Even with weights, hard prerequisite constraints must hold."""
+        weights = {
+            ("web02", "web03"): 0.1,
+            ("web02", "web07"): 10.0,
+            ("web03", "web04"): 0.1,
+            ("web03", "web05"): 0.1,
+            ("web04", "web08"): 0.1,
+            ("web05", "web08"): 0.1,
+            ("web07", "web08"): 10.0,
+        }
+        path = generate_learning_path(
+            known_skills=["web01", "web02"],
+            target_skill="web08",
+            edge_weights=weights,
+            **fake_graph,
+        )
+        assert path.index("web03") < path.index("web04")
+        assert path.index("web03") < path.index("web05")
+
+    def test_trust_aware_with_empty_weights(self, fake_graph):
+        """An empty weights dict should work (all edges default to 1.0)."""
+        path = generate_learning_path(
+            known_skills=["web01", "web02"],
+            target_skill="web08",
+            edge_weights={},
+            **fake_graph,
+        )
+        assert "web08" in path
+
+    def test_trust_aware_cycle_detection(self, cyclic_graph):
+        """Trust-aware mode should still detect cycles."""
+        with pytest.raises(CycleDetected):
+            generate_learning_path(
+                known_skills=[],
+                target_skill="target",
+                edge_weights={("A", "B"): 1.0, ("B", "C"): 1.0, ("C", "A"): 1.0},
+                **cyclic_graph,
+            )

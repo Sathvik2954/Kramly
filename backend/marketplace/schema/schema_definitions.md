@@ -1,4 +1,4 @@
-# Student Knowledge Marketplace — Schema (Phase 5, Person A)
+# Student Knowledge Marketplace — Schema
 
 Proposed schema, not a verified industry standard — adjust as real usage informs it.
 
@@ -12,7 +12,7 @@ Proposed schema, not a verified industry standard — adjust as real usage infor
 | upload_date | string (ISO) | |
 | content_hash | string | SHA-256 hex digest, for exact-duplicate detection |
 | storage_key | string | key used to retrieve content via StorageBackend |
-| quality_score | float | nullable — set in Phase 6 by Person A's quality scoring |
+| quality_score | float | nullable — set by quality.py's scoring pass |
 | status | string | active / outdated |
 
 ## Node: Author
@@ -30,11 +30,11 @@ Created by concept_extraction.py — links a resource to the skill(s) it teaches
 
 ## Relationship: SIMILAR_TO
 `(Resource)-[:SIMILAR_TO {similarity_score}]->(Resource)`
-NOT created by Person A's code — this is Person B's near-duplicate/embeddings work (Phase 5 split).
+Created by the near-duplicate/embeddings work in discovery.py, not ingestion.py.
 
 ## Relationship: SUPERSEDES
 `(Resource)-[:SUPERSEDES]->(Resource)`
-NOT created in Phase 5 — this is Phase 6 (evolution tracking), Person A's track.
+Created by the evolution-tracking logic in quality.py, not ingestion.py.
 
 ## Validation checklist
 - [ ] content_hash correctly detects exact-duplicate uploads (test with identical bytes twice)

@@ -20,9 +20,10 @@ Design decisions
    (the connection pool) lives in the driver managed by ``database.py``.
 
 4. **Read-only transactions.**
-   Person B's backend never writes to the graph — that's Person A's domain.
-   Every query here uses ``session.execute_read()`` to make the read-only
-   intent explicit and allow Neo4j to route reads to followers in a cluster.
+   The backend API never writes to the graph — writes are the job of the
+   graph-loading/extraction scripts under ``graph/``. Every query here uses
+   ``session.execute_read()`` to make the read-only intent explicit and
+   allow Neo4j to route reads to followers in a cluster.
 
 5. **Typed return values.**
    Every function has full type annotations and a docstring describing the
@@ -282,8 +283,17 @@ def get_prerequisite_edges(
     return edges
 
 
-def get_graph_visualization_data(*, driver: Optional[Driver] = None) -> dict:
-    """Fetch all skills and all prerequisite edges for graph visualization.
+def get_graph_visualization_data(
+    domain: Optional[str] = None, *, driver: Optional[Driver] = None
+) -> dict:
+    """Fetch skills and prerequisite edges for graph visualization.
+
+    Parameters
+    ----------
+    domain : str, optional
+        If given, only returns skills in that domain and edges between
+        two skills that are both in that domain. If omitted, returns the
+        full multi-domain graph.
 
     Returns
     -------
@@ -292,17 +302,42 @@ def get_graph_visualization_data(*, driver: Optional[Driver] = None) -> dict:
     """
     nodes_query = """
     MATCH (s:Skill)
+    WHERE $domain IS NULL OR s.domain = $domain
     RETURN s.id AS id, s.name AS name, s.domain AS domain
     """
     links_query = """
     MATCH (a:Skill)-[:PREREQUISITE_OF]->(b:Skill)
+    WHERE ($domain IS NULL OR (a.domain = $domain AND b.domain = $domain))
     RETURN a.id AS source, b.id AS target
     """
     with _get_session(driver) as session:
         nodes = session.execute_read(
-            lambda tx: [dict(r) for r in tx.run(nodes_query)]
+            lambda tx: [dict(r) for r in tx.run(nodes_query, domain=domain)]
         )
         links = session.execute_read(
-            lambda tx: [dict(r) for r in tx.run(links_query)]
+            lambda tx: [dict(r) for r in tx.run(links_query, domain=domain)]
         )
     return {"nodes": nodes, "links": links}
+
+
+def get_distinct_domains(*, driver: Optional[Driver] = None) -> list[str]:
+    """Fetch the distinct set of skill domains present in the graph.
+
+    Used to populate a domain selector in the UI so the graph
+    visualization can be scoped to one domain at a time instead of
+    rendering every domain's skills at once.
+
+    Returns
+    -------
+    list[str]
+        Sorted, non-null domain names.
+    """
+    query = """
+    MATCH (s:Skill)
+    WHERE s.domain IS NOT NULL
+    RETURN DISTINCT s.domain AS domain
+    ORDER BY domain
+    """
+    with _get_session(driver) as session:
+        records = session.execute_read(lambda tx: list(tx.run(query)))
+    return [r["domain"] for r in records]

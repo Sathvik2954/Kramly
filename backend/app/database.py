@@ -22,6 +22,12 @@ Design decisions
    If Neo4j is unreachable, the app crashes at startup with a clear error
    instead of silently accepting requests that will all fail.
 
+3a. **Targets Neo4j Aura (cloud) only.**
+    ``settings.neo4j_uri`` is passed straight through to ``GraphDatabase.driver()``
+    and must be an Aura connection string (``neo4j+s://...databases.neo4j.io``).
+    There is no local Neo4j Desktop/Community fallback — see app/config.py,
+    where ``neo4j_uri`` is a required setting with no default.
+
 4. **No business logic here.**
    This module only owns the driver.  All Cypher queries live in
    ``graph_service.py``; all path-planning logic lives in ``planner.py``.

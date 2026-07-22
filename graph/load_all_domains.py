@@ -1,13 +1,14 @@
 """
 load_all_domains.py
 Loads one or more domain seed datasets into Neo4j, optionally including
-cross-domain prerequisite links.
+cross-domain prerequisite links. This is the primary seed loader for the
+project (load_graph.py, the earlier single-file/placeholder-data version,
+was removed - this script fully supersedes it).
 
-VERIFY BEFORE RUNNING: same driver-method caveats as load_graph.py apply
-here (GraphDatabase.driver, session.execute_write, tx.run, verify_connectivity).
-These were checked against Neo4j Python Driver 6.2 official docs as of this
-writing, but confirm against current docs if you're on a different version:
-https://neo4j.com/docs/api/python-driver/current/
+Connection settings (NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD) come from
+graph/db.py, which reads the project-root .env. Targets Neo4j Aura
+(cloud) only — NEO4J_URI must be an Aura connection string
+(neo4j+s://<dbid>.databases.neo4j.io), no local Desktop instance is used.
 
 Usage:
     python load_all_domains.py coding sde webdev devops aiml --cross-domain
@@ -17,18 +18,8 @@ Usage:
 import csv
 import os
 import sys
-from dotenv import load_dotenv
-from neo4j import GraphDatabase
 
-# Load .env from project root (one level up from graph/)
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-
-NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.environ.get("NEO4J_PASSWORD")
-
-if not NEO4J_PASSWORD:
-    raise RuntimeError("Set NEO4J_PASSWORD as an environment variable before running this script.")
+from db import get_driver
 
 SEED_DIR = os.path.join(os.path.dirname(__file__), "seed_data")
 
@@ -62,7 +53,7 @@ def load_prerequisites(tx, prereqs):
 
 
 def check_for_cycles(all_skills, all_prereqs):
-    """From-scratch DFS cycle check across the combined dataset — important
+    """From-scratch DFS cycle check across the combined dataset - important
     when merging domains, since a cross-domain edge could introduce a cycle
     that didn't exist within any single domain."""
     graph = {}
@@ -103,11 +94,12 @@ def main():
         skills_path = os.path.join(SEED_DIR, domain, f"{domain}_skills.csv")
         prereqs_path = os.path.join(SEED_DIR, domain, f"{domain}_prerequisites.csv")
         if not os.path.exists(skills_path):
-            print(f"WARNING: no seed data found for domain '{domain}' — skipping.")
+            print(f"WARNING: no seed data found for domain '{domain}' - skipping.")
             continue
-        all_skills.extend(read_csv(skills_path))
+        domain_skills = read_csv(skills_path)
+        all_skills.extend(domain_skills)
         all_prereqs.extend(read_csv(prereqs_path))
-        print(f"Loaded {domain}: {len(read_csv(skills_path))} skills.")
+        print(f"Loaded {domain}: {len(domain_skills)} skills.")
 
     if include_cross:
         cross_path = os.path.join(SEED_DIR, "cross_domain_prerequisites.csv")
@@ -123,13 +115,12 @@ def main():
         return
 
     if check_for_cycles(all_skills, all_prereqs):
-        print("WARNING: Cycle detected in combined data. Fix before loading — "
+        print("WARNING: Cycle detected in combined data. Fix before loading - "
               "check whether a cross-domain link introduced it.")
         return
 
-    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
     try:
-        driver.verify_connectivity()
+        driver = get_driver()
     except Exception as e:
         print(f"Could not connect to Neo4j: {e}")
         return

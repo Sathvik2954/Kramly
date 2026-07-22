@@ -1,27 +1,27 @@
 """
 decay_scanner.py
-Phase 4, Person A — Data/State track: decay-scanning component.
+Decay-scanning component: finds learners whose skill confidence has
+decayed past the replanning threshold.
 
 Scans ALL learners' KNOWS relationships, runs each through decay.py's
 threshold check, and returns which (learner_id, skill_id) pairs have
 crossed the decay threshold.
 
-IMPORTANT: this module only DETECTS crossed-threshold cases. It does NOT
-trigger replanning itself — that's Person B's job (wiring this output
-into trigger_engine.py/replanner.py, per the Phase 4 plan). Keeping this
-separation is deliberate: Person A's code stays testable independent of
-the agent/replanning machinery.
-
-VERIFY BEFORE RUNNING: same Neo4j driver caveats as knowledge_state.py —
-tx.run() / session usage checked against Neo4j Python Driver 6.2 docs
-previously. Re-verify if your driver version differs.
+This module only DETECTS crossed-threshold cases. It does NOT trigger
+replanning itself — that's wired in separately by the agent layer. Keeping
+this separation deliberate keeps the scan testable independent of the
+agent/replanning machinery.
 """
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from optimizer.decay import has_crossed_decay_threshold, compute_decayed_confidence
 
-DEFAULT_DECAY_THRESHOLD = 0.5  # matches decay.py's default — kept explicit here for clarity
+
+def _default_threshold() -> float:
+    from app.config import settings
+    return settings.decay_threshold
 
 
 def get_all_learner_skill_states(tx):
@@ -37,7 +37,7 @@ def get_all_learner_skill_states(tx):
     RETURN l.id AS learner_id, s.id AS skill_id,
            k.confidence AS confidence, k.last_practiced AS last_practiced
     """
-    result = tx.run(query)  # VERIFY: tx.run() iteration behavior in your driver version
+    result = tx.run(query)
     return [dict(record) for record in result]
 
 
@@ -45,15 +45,13 @@ def _parse_timestamp(raw_timestamp):
     """
     knowledge_state.py stores last_practiced as an ISO string
     (via .isoformat()). This parses it back to a datetime for decay math.
-    VERIFY: datetime.fromisoformat() behavior with your stored format,
-    especially if timezone info might be missing on older records.
     """
     if isinstance(raw_timestamp, datetime):
         return raw_timestamp
     return datetime.fromisoformat(raw_timestamp)
 
 
-def scan_for_decayed_skills(tx, threshold: float = DEFAULT_DECAY_THRESHOLD, now: datetime = None):
+def scan_for_decayed_skills(tx, threshold: Optional[float] = None, now: datetime = None):
     """
     Scans all learners' known skills and returns those that have crossed
     the decay threshold — i.e., candidates for an automatic replan.
@@ -62,10 +60,14 @@ def scan_for_decayed_skills(tx, threshold: float = DEFAULT_DECAY_THRESHOLD, now:
         {learner_id, skill_id, base_confidence, decayed_confidence, last_practiced}
 
     This is intentionally read-only — it does not modify graph state or
-    trigger anything. Person B's code consumes this output.
+    trigger anything; the agent layer consumes this output and decides
+    whether to act on it. threshold defaults to Settings.decay_threshold
+    when not given explicitly.
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    if threshold is None:
+        threshold = _default_threshold()
 
     all_states = get_all_learner_skill_states(tx)
     flagged = []

@@ -1,22 +1,16 @@
 """
 knowledge_state.py
-Phase 2, Person A — Knowledge state tracking.
+Knowledge state tracking.
 
 Records "evidence" of learning (quiz results, self-reports) and maintains
 per-skill confidence + last-practiced timestamps for each learner.
 
-SCHEMA DESIGN NOTE (flagging a real change, not assuming agreement):
-schema_definitions.md modeled `known_skills` as a list property on the
-Learner node. This file instead uses a graph-native
-(:Learner)-[:KNOWS {confidence, last_practiced}]->(:Skill) relationship —
-more idiomatic for a graph DB (lets you query "who knows skill X" directly,
-update one skill without rewriting a whole list). Confirm with your
-teammate before merging, since it affects existing graph_service.py /
-planner.py queries if they assumed the list-property version.
-
-VERIFY BEFORE RUNNING: tx.run() / session usage checked against Neo4j
-Python Driver 6.2 docs previously — re-verify if your driver version
-differs, per the same caveat as load_all_domains.py.
+SCHEMA DESIGN NOTE: schema_definitions.md models `known_skills` as a list
+property on the Learner node, but this file uses a graph-native
+(:Learner)-[:KNOWS {confidence, last_practiced}]->(:Skill) relationship
+instead — more idiomatic for a graph DB (lets you query "who knows skill X"
+directly, update one skill without rewriting a whole list). This affects
+how graph_service.py / planner.py query learner state.
 """
 
 from datetime import datetime, timezone
@@ -59,7 +53,7 @@ def get_learner_known_skills(tx, learner_id: str):
     RETURN s.id AS skill_id, k.confidence AS confidence, k.last_practiced AS last_practiced
     """
     result = tx.run(query, learner_id=learner_id)
-    return [dict(record) for record in result]  # VERIFY: dict(record) conversion behavior in your driver version
+    return [dict(record) for record in result]
 
 
 def set_target_skill(tx, learner_id: str, target_skill_id: str, deadline: str = None):

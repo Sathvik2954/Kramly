@@ -8,6 +8,12 @@ venv/
 .coverage
 htmlcov/
 
+# Runtime-generated data (not source)
+marketplace_files/
+backend/marketplace_files/
+graph/extraction/candidate_edges.csv
+graph/extraction/reviewed_approved.csv
+
 # Node / Frontend
 frontend/node_modules/
 frontend/dist/

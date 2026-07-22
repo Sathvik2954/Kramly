@@ -8,7 +8,11 @@ Design decisions
 1. **``lifespan`` context manager for startup/shutdown.**
    FastAPI's modern ``lifespan`` replaces the deprecated ``@app.on_event``
    decorators.  The driver is initialised before the first request and
-   closed after the last — deterministic, no resource leaks.
+   closed after the last — deterministic, no resource leaks. The
+   autonomous background scheduler (decay-scan + agentic cycle +
+   crowd-confidence rescan + quality-weight calibration) is also
+   started/stopped here, so it runs for the whole lifetime of the process
+   rather than only when something calls /decay-scan.
 
 2. **Logging is configured here, once.**
    ``basicConfig`` sets a human-readable format for all loggers in the
@@ -19,6 +23,23 @@ Design decisions
    It assembles the pieces (config, database, router) but contains
    no business logic.  If you need a second router later, it's one
    ``app.include_router()`` call.
+
+4. **CORS origins and the marketplace similarity threshold come from
+   Settings** (app/config.py) rather than hardcoded literals — see
+   cors_allow_origins and marketplace_similarity_threshold.
+
+5. **Decision history read via app.decision_log_service, not an
+   in-memory dict.** The scheduler's fetch_learner_context needs the same
+   "what was the last computed path" lookup api/routes.py's routes use —
+   both now go through the Neo4j-persisted decision log.
+
+6. **Two schedulers run per AgentScheduler instance now.** `run_now()`
+   still powers the original decay-triggered single-action replan flow
+   (unchanged, still what `/decay-scan` calls on demand). `run_agentic_cycle()`
+   is the new observe-reason-act loop over a real action space
+   (agent/actions.py, agent/observation.py, agent/controller.py,
+   agent/executor.py) — wired onto its own interval job below so it can't
+   regress the original behavior even if something about it is wrong.
 
 Run
 ~~~
@@ -36,6 +57,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import router
 from api.review_routes import router as review_router
+from app.config import settings
 from app.database import close_driver, init_driver
 
 # Marketplace Imports & Dependency Overrides
@@ -43,9 +65,8 @@ from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from app.database import get_driver
 from marketplace.models import MarketplaceResource
-from marketplace.recommendation_service import RecommendationService
-from marketplace.embedding_service import EmbeddingProvider, OllamaEmbeddingProvider, EmbeddingService
-from marketplace.similarity_service import find_similar_resources
+from marketplace.discovery import RecommendationService, find_similar_resources
+from marketplace.embedding_service import EmbeddingProvider, MistralEmbeddingProvider, EmbeddingService
 from marketplace.api import (
     router as marketplace_router,
     get_recommendation_service,
@@ -211,9 +232,10 @@ def concrete_register_resource(resource: MarketplaceResource) -> MarketplaceReso
 def generate_and_save_similarities(resource_id: str, description: str):
     driver = get_driver()
     
-    # 1. Generate embedding
+    # 1. Generate embedding (Mistral primary, deterministic mock fallback if
+    #    no MISTRAL_API_KEY is configured or the call fails)
     try:
-        provider = OllamaEmbeddingProvider()
+        provider = MistralEmbeddingProvider()
         emb_service = EmbeddingService(provider)
         embedding = emb_service.generate_embedding(description)
     except Exception:
@@ -251,7 +273,7 @@ def generate_and_save_similarities(resource_id: str, description: str):
     find_similar_resources(
         target_resource_id=resource_id,
         target_embedding=embedding,
-        similarity_threshold=0.5,
+        similarity_threshold=settings.marketplace_similarity_threshold,
         fetch_embeddings_func=fetch_all_embeddings,
         create_edge_func=create_similar_edge
     )
@@ -268,17 +290,206 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Autonomous background scheduler wiring
+# ---------------------------------------------------------------------------
+# Builds the same AgentScheduler api/routes.py's /decay-scan endpoint uses
+# for on-demand runs, but starts it on a real recurring interval
+# (Settings.decay_scan_interval_minutes) so decay-triggered replanning
+# happens without anything external calling the API. /decay-scan remains
+# available for an immediate on-demand run regardless of scheduler state.
+# The same AgentScheduler instance also carries fetch_learner_observation
+# and record_agentic_decision, which power run_agentic_cycle() — the real
+# observe-reason-act loop, scheduled separately below.
+
+def _build_agent_scheduler():
+    import datetime as _dt
+    from agent.engine import AgentScheduler
+    from agent.models import DecayEvent
+    from agent.observation import observe_learner_state
+    from app import graph_service
+    from app.decay_scanner import scan_for_decayed_skills
+    from app.decision_log_service import (
+        build_agentic_decision_entry,
+        fetch_decision_log,
+        record_agentic_decision_entry,
+    )
+    from app.knowledge_state import get_learner_target_skill, get_learner_known_skills
+    from api.routes import _filter_active_skills
+
+    def fetch_decay_events() -> list[DecayEvent]:
+        driver = get_driver()
+        now = _dt.datetime.now(_dt.timezone.utc)
+        with driver.session() as session:
+            flagged = session.execute_read(scan_for_decayed_skills, now=now)
+        return [DecayEvent(learner_id=f["learner_id"], skill_id=f["skill_id"]) for f in flagged]
+
+    def fetch_learner_context(learner_id: str):
+        driver = get_driver()
+        now = _dt.datetime.now(_dt.timezone.utc)
+        with driver.session() as session:
+            target_skill_id, deadline = session.execute_read(get_learner_target_skill, learner_id=learner_id)
+            if not target_skill_id:
+                return None
+            known_skills_data = session.execute_read(get_learner_known_skills, learner_id=learner_id)
+            active_known_skills = _filter_active_skills(known_skills_data, now=now)
+
+            previous_path = []
+            history = session.execute_read(fetch_decision_log, learner_id=learner_id)
+            if history:
+                previous_path = history[-1].get("new_path", [])
+
+            return {
+                "known_skills": active_known_skills,
+                "target_skill": target_skill_id,
+                "current_path": previous_path,
+            }
+
+    def fetch_learner_observation(learner_id: str, decayed_skill_ids: list[str]):
+        driver = get_driver()
+        now = _dt.datetime.now(_dt.timezone.utc)
+        with driver.session() as session:
+            return session.execute_read(
+                observe_learner_state,
+                learner_id=learner_id,
+                decayed_skill_ids=decayed_skill_ids,
+                now=now,
+            )
+
+    def record_agentic_decision(learner_id, observation, chosen, result):
+        driver = get_driver()
+        entry = build_agentic_decision_entry(observation, chosen, result)
+        with driver.session() as session:
+            session.execute_write(record_agentic_decision_entry, learner_id=learner_id, entry=entry)
+
+    return AgentScheduler(
+        fetch_decay_events=fetch_decay_events,
+        fetch_learner_context=fetch_learner_context,
+        fetch_skill=graph_service.get_skill,
+        fetch_all_prereqs_recursive=graph_service.get_all_prerequisites_recursive,
+        fetch_prereq_edges=graph_service.get_prerequisite_edges,
+        fetch_learner_observation=fetch_learner_observation,
+        record_agentic_decision=record_agentic_decision,
+    )
+
+
+def _run_crowd_confidence_rescan():
+    """Recomputes crowd_confidence on every PREREQUISITE_OF edge. Runs
+    alongside the decay scan, per marketplace/quality.py's own docstring
+    ("intended to run periodically... not on every request")."""
+    from marketplace.quality import scan_all_edges_for_crowd_confidence
+
+    try:
+        driver = get_driver()
+        with driver.session() as session:
+            updated = session.execute_write(scan_all_edges_for_crowd_confidence)
+        logger.info("Autonomous crowd-confidence rescan updated %d edge(s).", len(updated))
+    except Exception as exc:  # noqa: BLE001 - background job guard, must never crash the app
+        logger.error("Crowd-confidence rescan failed: %s", exc, exc_info=True)
+
+
+def _run_quality_calibration():
+    """Refits marketplace quality-score weights from outcome data (see
+    optimizer/calibration.py). Currently that data is entirely synthetic
+    unless scripts/generate_synthetic_usage.py has been replaced/joined by
+    a real outcome pipeline — see that module's HONEST SCOPE FLAG."""
+    from optimizer.calibration import calibrate_quality_weights
+
+    try:
+        driver = get_driver()
+        with driver.session() as session:
+            fitted = session.execute_write(calibrate_quality_weights)
+        if fitted is None:
+            logger.info("Quality-weight calibration skipped: not enough outcome data yet.")
+        else:
+            logger.info("Quality-weight calibration updated weights to %s.", fitted)
+    except Exception as exc:  # noqa: BLE001 - background job guard, must never crash the app
+        logger.error("Quality-weight calibration failed: %s", exc, exc_info=True)
+
+
+def _run_agentic_cycle():
+    """Runs AgentScheduler.run_agentic_cycle() - the real observe-reason-act
+    loop - on its own interval, independent of run_now()'s job so a bug in
+    the new action-selection path can never take down the original
+    decay-triggered replan behavior."""
+    try:
+        if _agent_scheduler is not None:
+            results = _agent_scheduler.run_agentic_cycle()
+            logger.info("Autonomous agentic cycle processed %d learner(s).", len(results))
+    except Exception as exc:  # noqa: BLE001 - background job guard, must never crash the app
+        logger.error("Agentic cycle failed: %s", exc, exc_info=True)
+
+
+_agent_scheduler = None
+_background_scheduler = None
+
+
+def _start_background_jobs():
+    global _agent_scheduler, _background_scheduler
+
+    if not settings.scheduler_enabled:
+        logger.info("Background scheduler disabled via Settings.scheduler_enabled.")
+        return
+
+    _agent_scheduler = _build_agent_scheduler()
+    _agent_scheduler.start_scheduler()
+
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    _background_scheduler = BackgroundScheduler()
+    _background_scheduler.add_job(
+        _run_crowd_confidence_rescan,
+        "interval",
+        minutes=settings.calibration_interval_minutes,
+        id="crowd_confidence_rescan",
+        replace_existing=True,
+    )
+    _background_scheduler.add_job(
+        _run_quality_calibration,
+        "interval",
+        minutes=settings.calibration_interval_minutes,
+        id="quality_calibration",
+        replace_existing=True,
+    )
+    _background_scheduler.add_job(
+        _run_agentic_cycle,
+        "interval",
+        minutes=settings.decay_scan_interval_minutes,
+        id="agentic_cycle",
+        replace_existing=True,
+    )
+    _background_scheduler.start()
+    logger.info(
+        "Autonomous crowd-confidence rescan + quality-weight calibration scheduled, interval=%d minute(s). "
+        "Agentic cycle scheduled, interval=%d minute(s).",
+        settings.calibration_interval_minutes,
+        settings.decay_scan_interval_minutes,
+    )
+
+
+def _stop_background_jobs():
+    global _agent_scheduler, _background_scheduler
+    if _agent_scheduler is not None:
+        _agent_scheduler.stop_scheduler()
+        _agent_scheduler = None
+    if _background_scheduler is not None:
+        _background_scheduler.shutdown(wait=False)
+        _background_scheduler = None
+
+
+# ---------------------------------------------------------------------------
 # Application lifespan — startup / shutdown hooks.
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Kramly backend …")
     init_driver()
+    _start_background_jobs()
     logger.info("Kramly backend ready.")
 
     yield
 
     logger.info("Shutting down Kramly backend …")
+    _stop_background_jobs()
     close_driver()
     logger.info("Kramly backend stopped.")
 
@@ -298,10 +509,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for frontend integration
+# Enable CORS for frontend integration. Origins come from
+# Settings.cors_allow_origins ("*" by default for local dev) rather than a
+# hardcoded literal — set it to your real frontend origin(s) before
+# exposing this API beyond localhost.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allow_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

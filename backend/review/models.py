@@ -6,8 +6,8 @@ Data models for the Human-in-the-Loop review system.
 Design decisions
 ~~~~~~~~~~~~~~~~
 1. **Pydantic Validation**:
-   By defining CandidateEdge and ReviewDecision as Pydantic models, we ensure 
-   that malformed data from the LLM extraction pipeline (Person A) or frontend 
+   By defining CandidateEdge and ReviewDecision as Pydantic models, we ensure
+   that malformed data from the LLM extraction pipeline or frontend
    cannot enter the governance layer.
 2. **Explicit Enums**:
    CandidateStatus explicitly restricts the state machine to exactly four states 

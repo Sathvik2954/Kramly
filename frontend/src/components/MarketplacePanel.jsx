@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
-import { 
-  fetchMarketplaceRecommendations, 
-  fetchResourceDetails, 
-  uploadResource, 
-  rateResource, 
-  supersedeResource, 
-  fetchResourceHistory 
+import {
+  fetchMarketplaceRecommendations,
+  fetchResourceDetails,
+  uploadResource,
+  rateResource,
+  supersedeResource,
+  fetchResourceHistory
 } from "../api/client";
 
 export default function MarketplacePanel({ graphData }) {
@@ -128,40 +128,31 @@ export default function MarketplacePanel({ graphData }) {
 
   const skillsList = graphData?.nodes || [];
 
+  const tabButtonStyle = (isActive) => ({
+    background: "none",
+    border: "none",
+    borderBottom: isActive ? "var(--border-w) solid var(--accent-primary)" : "var(--border-w) solid transparent",
+    color: isActive ? "var(--text-primary)" : "var(--text-muted)",
+    padding: "0.5rem 0.25rem",
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: "0.78rem",
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    fontFamily: "var(--font-mono)"
+  });
+
+  const fieldLabelStyle = { display: "block", fontSize: "0.72rem", marginBottom: "0.3rem", color: "var(--text-secondary)", fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 700 };
+  const fieldInputStyle = { width: "100%" };
+
   return (
-    <div style={{ marginTop: "1rem" }}>
-      <div style={{ display: "flex", borderBottom: "1px solid var(--border-color)", marginBottom: "1rem", gap: "1rem" }}>
-        <button
-          type="button"
-          onClick={() => setActiveTab("search")}
-          style={{
-            background: "none",
-            border: "none",
-            borderBottom: activeTab === "search" ? "2px solid var(--accent-success)" : "none",
-            color: activeTab === "search" ? "var(--accent-success)" : "var(--text-secondary)",
-            padding: "0.5rem 1rem",
-            cursor: "pointer",
-            fontWeight: "500",
-            fontSize: "0.9rem"
-          }}
-        >
-          🔍 Search & Rate Resources
+    <div>
+      <div style={{ display: "flex", borderBottom: "var(--border-w) solid var(--border-color)", marginBottom: "1.25rem", gap: "1.5rem" }}>
+        <button type="button" onClick={() => setActiveTab("search")} style={tabButtonStyle(activeTab === "search")}>
+          Search &amp; Rate Resources
         </button>
-        <button
-          type="button"
-          onClick={() => setActiveTab("upload")}
-          style={{
-            background: "none",
-            border: "none",
-            borderBottom: activeTab === "upload" ? "2px solid var(--accent-success)" : "none",
-            color: activeTab === "upload" ? "var(--accent-success)" : "var(--text-secondary)",
-            padding: "0.5rem 1rem",
-            cursor: "pointer",
-            fontWeight: "500",
-            fontSize: "0.9rem"
-          }}
-        >
-          📤 Contribute Notes
+        <button type="button" onClick={() => setActiveTab("upload")} style={tabButtonStyle(activeTab === "upload")}>
+          Contribute Notes
         </button>
       </div>
 
@@ -171,14 +162,7 @@ export default function MarketplacePanel({ graphData }) {
             <select
               value={selectedSkill}
               onChange={(e) => setSelectedSkill(e.target.value)}
-              style={{
-                flex: "1",
-                padding: "0.5rem",
-                borderRadius: "6px",
-                backgroundColor: "var(--bg-card)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border-color)"
-              }}
+              style={{ flex: "1" }}
             >
               <option value="">-- Choose a Concept --</option>
               {skillsList.map((skill) => (
@@ -187,12 +171,7 @@ export default function MarketplacePanel({ graphData }) {
                 </option>
               ))}
             </select>
-            <button
-              type="submit"
-              disabled={recLoading}
-              className="btn"
-              style={{ padding: "0.5rem 1.25rem" }}
-            >
+            <button type="submit" disabled={recLoading} className="btn">
               {recLoading ? "Searching..." : "Search"}
             </button>
           </form>
@@ -200,7 +179,7 @@ export default function MarketplacePanel({ graphData }) {
           {recError && <div className="error-badge" style={{ marginBottom: "1rem" }}>{recError}</div>}
 
           {recommendations.length === 0 && !recLoading && (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1.5rem" }}>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", textAlign: "center", padding: "1.5rem", fontFamily: "var(--font-mono)" }}>
               No learning resources have been uploaded for this concept yet.
             </p>
           )}
@@ -209,13 +188,12 @@ export default function MarketplacePanel({ graphData }) {
             {recommendations.map((rec) => {
               const rating = userRatings[rec.resource_id] || 0;
               return (
-                <div 
-                  key={rec.resource_id} 
+                <div
+                  key={rec.resource_id}
                   style={{
                     padding: "1rem",
-                    borderRadius: "8px",
-                    backgroundColor: "rgba(255, 255, 255, 0.02)",
-                    border: "1px solid var(--border-color)",
+                    backgroundColor: "var(--bg-card)",
+                    border: "var(--border-w) solid var(--border-color)",
                     display: "flex",
                     flexDirection: "column",
                     gap: "0.5rem"
@@ -223,40 +201,31 @@ export default function MarketplacePanel({ graphData }) {
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div>
-                      <h4 style={{ margin: "0", fontSize: "0.95rem", color: "var(--text-primary)" }}>
-                        Resource ID: <code style={{ color: "var(--accent-success)" }}>{rec.resource_id}</code>
+                      <h4 style={{ margin: "0", fontSize: "0.9rem", color: "var(--text-primary)" }}>
+                        Resource ID: <code style={{ color: "var(--accent-primary)" }}>{rec.resource_id}</code>
                       </h4>
-                      <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                      <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.72rem", color: "var(--text-muted)" }}>
                         Reason: {rec.reason}
                       </p>
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <span className="badge" style={{ backgroundColor: "rgba(16, 185, 129, 0.15)", color: "var(--accent-success)" }}>
+                      <span className="badge">
                         Match Score: {rec.score.toFixed(1)}
                       </span>
                     </div>
                   </div>
 
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem", borderTop: "1px dashed rgba(255, 255, 255, 0.05)", paddingTop: "0.5rem" }}>
-                    <button 
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem", borderTop: "1px dashed var(--color-grey-mid)", paddingTop: "0.5rem" }}>
+                    <button
                       type="button"
                       onClick={() => handleOpenReader(rec.resource_id)}
-                      style={{
-                        padding: "0.3rem 0.8rem",
-                        fontSize: "0.75rem",
-                        borderRadius: "4px",
-                        backgroundColor: "var(--accent-success)",
-                        color: "#000",
-                        border: "none",
-                        cursor: "pointer",
-                        fontWeight: "600"
-                      }}
+                      style={{ padding: "0.35rem 0.85rem", fontSize: "0.7rem" }}
                     >
-                      📖 Read Content & Details
+                      Read Content &amp; Details
                     </button>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginRight: "0.25rem" }}>Rate:</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.15rem" }}>
+                      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginRight: "0.35rem", fontFamily: "var(--font-mono)", textTransform: "uppercase" }}>Rate:</span>
                       {[1, 2, 3, 4, 5].map((val) => (
                         <span
                           key={val}
@@ -264,7 +233,7 @@ export default function MarketplacePanel({ graphData }) {
                           style={{
                             cursor: "pointer",
                             fontSize: "1.1rem",
-                            color: val <= rating ? "#fbbf24" : "rgba(255, 255, 255, 0.2)"
+                            color: val <= rating ? "var(--accent-primary)" : "var(--color-grey-mid)"
                           }}
                         >
                           ★
@@ -282,61 +251,34 @@ export default function MarketplacePanel({ graphData }) {
       {activeTab === "upload" && (
         <form onSubmit={handleUpload} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           <div>
-            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "var(--text-secondary)" }}>
-              Resource Title *
-            </label>
+            <label style={fieldLabelStyle}>Resource Title *</label>
             <input
               type="text"
               required
               value={uploadTitle}
               onChange={(e) => setUploadTitle(e.target.value)}
               placeholder="e.g. Introduction to CSS Grid"
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                borderRadius: "6px",
-                backgroundColor: "var(--bg-card)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border-color)"
-              }}
+              style={fieldInputStyle}
             />
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
             <div>
-              <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "var(--text-secondary)" }}>
-                Author Name / ID *
-              </label>
+              <label style={fieldLabelStyle}>Author Name / ID *</label>
               <input
                 type="text"
                 required
                 value={uploadAuthor}
                 onChange={(e) => setUploadAuthor(e.target.value)}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem",
-                  borderRadius: "6px",
-                  backgroundColor: "var(--bg-card)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-color)"
-                }}
+                style={fieldInputStyle}
               />
             </div>
             <div>
-              <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "var(--text-secondary)" }}>
-                Covered Skill Target
-              </label>
+              <label style={fieldLabelStyle}>Covered Skill Target</label>
               <select
                 value={uploadSkills[0] || ""}
                 onChange={(e) => setUploadSkills(e.target.value ? [e.target.value] : [])}
-                style={{
-                  width: "100%",
-                  padding: "0.5rem",
-                  borderRadius: "6px",
-                  backgroundColor: "var(--bg-card)",
-                  color: "var(--text-primary)",
-                  border: "1px solid var(--border-color)"
-                }}
+                style={fieldInputStyle}
               >
                 <option value="">-- Choose Target Skill --</option>
                 {skillsList.map((skill) => (
@@ -349,45 +291,25 @@ export default function MarketplacePanel({ graphData }) {
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "var(--text-secondary)" }}>
-              Short Description
-            </label>
+            <label style={fieldLabelStyle}>Short Description</label>
             <input
               type="text"
               value={uploadDesc}
               onChange={(e) => setUploadDesc(e.target.value)}
               placeholder="e.g. Complete reference manual covering layout patterns."
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                borderRadius: "6px",
-                backgroundColor: "var(--bg-card)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border-color)"
-              }}
+              style={fieldInputStyle}
             />
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "var(--text-secondary)" }}>
-              Resource Content (Markdown or Text) *
-            </label>
+            <label style={fieldLabelStyle}>Resource Content (Markdown or Text) *</label>
             <textarea
               required
               rows="6"
               value={uploadContent}
               onChange={(e) => setUploadContent(e.target.value)}
               placeholder="Write or paste your notes here..."
-              style={{
-                width: "100%",
-                padding: "0.5rem",
-                borderRadius: "6px",
-                backgroundColor: "var(--bg-card)",
-                color: "var(--text-primary)",
-                border: "1px solid var(--border-color)",
-                fontFamily: "var(--font-mono)",
-                fontSize: "0.85rem"
-              }}
+              style={{ ...fieldInputStyle, fontFamily: "var(--font-mono)", fontSize: "0.85rem" }}
             />
           </div>
 
@@ -395,14 +317,13 @@ export default function MarketplacePanel({ graphData }) {
 
           {uploadResult && (
             <div style={{
-              padding: "0.75rem 1rem",
-              backgroundColor: "rgba(16, 185, 129, 0.1)",
-              border: "1px solid var(--accent-success)",
-              borderRadius: "6px",
+              padding: "0.85rem 1rem",
+              backgroundColor: "var(--accent-success-bg)",
+              border: "var(--border-w) solid var(--border-color)",
               fontSize: "0.85rem"
             }}>
-              <strong style={{ color: "var(--accent-success)" }}>✓ Upload successful!</strong>
-              <p style={{ margin: "0.25rem 0 0 0", color: "var(--text-secondary)" }}>
+              <strong style={{ textTransform: "uppercase", fontSize: "0.75rem", letterSpacing: "0.04em" }}>Upload successful</strong>
+              <p style={{ margin: "0.35rem 0 0 0", color: "var(--text-secondary)" }}>
                 Resource ID: <code>{uploadResult.resource_id || uploadResult.id}</code>
               </p>
               <p style={{ margin: "0.25rem 0 0 0", color: "var(--text-secondary)" }}>
@@ -411,12 +332,7 @@ export default function MarketplacePanel({ graphData }) {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={uploadLoading}
-            className="btn"
-            style={{ width: "100%" }}
-          >
+          <button type="submit" disabled={uploadLoading} className="btn" style={{ width: "100%" }}>
             {uploadLoading ? "Uploading & Analyzing..." : "Submit Notes"}
           </button>
         </form>
@@ -429,7 +345,7 @@ export default function MarketplacePanel({ graphData }) {
           left: 0,
           right: 0,
           bottom: 0,
-          backgroundColor: "rgba(0,0,0,0.8)",
+          backgroundColor: "rgba(0,0,0,0.75)",
           zIndex: 1000,
           display: "flex",
           justifyContent: "center",
@@ -438,45 +354,46 @@ export default function MarketplacePanel({ graphData }) {
         }}>
           <div style={{
             backgroundColor: "var(--bg-card)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "12px",
+            border: "var(--border-thick) solid var(--border-color)",
             width: "100%",
             maxWidth: "650px",
             maxHeight: "85vh",
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
-            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)"
+            overflow: "hidden"
           }}>
             <div style={{
               padding: "1rem 1.5rem",
-              borderBottom: "1px solid var(--border-color)",
+              borderBottom: "var(--border-w) solid var(--border-color)",
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center"
             }}>
               <div>
-                <h3 style={{ margin: "0", fontSize: "1.1rem", color: "var(--text-primary)" }}>
+                <h3 style={{ margin: "0", fontSize: "1.05rem", color: "var(--text-primary)" }}>
                   {readerResource.title || `Resource: ${readerResource.id}`}
                 </h3>
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                  By: {readerResource.author_id || readerResource.author} | Status: 
-                  <span style={{ 
-                    marginLeft: "0.25rem",
-                    color: readerResource.status === "outdated" ? "var(--accent-error)" : "var(--accent-success)" 
+                <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                  By: {readerResource.author_id || readerResource.author} | Status:{" "}
+                  <span style={{
+                    marginLeft: "0.15rem",
+                    fontWeight: 700,
+                    color: readerResource.status === "outdated" ? "var(--accent-error)" : "var(--text-primary)"
                   }}>
                     {readerResource.status || "active"}
                   </span>
                 </span>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setReaderResource(null)}
                 style={{
                   background: "none",
-                  border: "none",
-                  color: "var(--text-muted)",
-                  fontSize: "1.5rem",
+                  border: "var(--border-w) solid var(--border-color)",
+                  color: "var(--text-primary)",
+                  fontSize: "1.1rem",
+                  lineHeight: 1,
+                  padding: "0.3rem 0.6rem",
                   cursor: "pointer"
                 }}
               >
@@ -487,21 +404,20 @@ export default function MarketplacePanel({ graphData }) {
             <div style={{ padding: "1.5rem", overflowY: "auto", flex: "1" }}>
               {readerResource.quality_score !== undefined && (
                 <div style={{ marginBottom: "1rem", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>Quality Rating:</span>
-                  <div style={{ 
-                    flex: "1", 
-                    height: "8px", 
-                    backgroundColor: "rgba(255,255,255,0.05)", 
-                    borderRadius: "4px",
-                    overflow: "hidden"
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)", fontFamily: "var(--font-mono)", textTransform: "uppercase" }}>Quality Rating:</span>
+                  <div style={{
+                    flex: "1",
+                    height: "8px",
+                    backgroundColor: "var(--bg-muted)",
+                    border: "1px solid var(--border-color)"
                   }}>
-                    <div style={{ 
-                      width: `${(readerResource.quality_score || 0) * 100}%`, 
-                      height: "100%", 
-                      backgroundColor: "var(--accent-success)" 
+                    <div style={{
+                      width: `${(readerResource.quality_score || 0) * 100}%`,
+                      height: "100%",
+                      backgroundColor: "var(--accent-primary)"
                     }}/>
                   </div>
-                  <span style={{ fontSize: "0.8rem", fontWeight: "600", color: "var(--accent-success)" }}>
+                  <span style={{ fontSize: "0.78rem", fontWeight: "700", color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>
                     {((readerResource.quality_score || 0) * 100).toFixed(0)}%
                   </span>
                 </div>
@@ -510,13 +426,12 @@ export default function MarketplacePanel({ graphData }) {
               {readerHistory.length > 0 && (
                 <div style={{
                   padding: "0.75rem",
-                  backgroundColor: "rgba(251, 191, 36, 0.05)",
-                  border: "1px solid rgba(251, 191, 36, 0.2)",
-                  borderRadius: "6px",
+                  backgroundColor: "var(--bg-muted)",
+                  border: "1px solid var(--border-color)",
                   marginBottom: "1rem",
                   fontSize: "0.8rem"
                 }}>
-                  <strong style={{ color: "#fbbf24", display: "block", marginBottom: "0.25rem" }}>📜 Version Provenance (Outdated History):</strong>
+                  <strong style={{ display: "block", marginBottom: "0.35rem", textTransform: "uppercase", fontSize: "0.7rem", letterSpacing: "0.04em" }}>Version Provenance (Outdated History)</strong>
                   <ul style={{ margin: 0, paddingLeft: "1.25rem" }}>
                     {readerHistory.map(old => (
                       <li key={old.id} style={{ color: "var(--text-secondary)" }}>
@@ -531,9 +446,8 @@ export default function MarketplacePanel({ graphData }) {
                 whiteSpace: "pre-wrap",
                 fontFamily: "var(--font-mono)",
                 fontSize: "0.85rem",
-                backgroundColor: "rgba(0,0,0,0.15)",
+                backgroundColor: "var(--bg-muted)",
                 padding: "1rem",
-                borderRadius: "6px",
                 border: "1px solid var(--border-color)",
                 color: "var(--text-secondary)",
                 margin: 0
@@ -544,16 +458,11 @@ export default function MarketplacePanel({ graphData }) {
 
             <div style={{
               padding: "1rem 1.5rem",
-              borderTop: "1px solid var(--border-color)",
+              borderTop: "var(--border-w) solid var(--border-color)",
               display: "flex",
               justifyContent: "flex-end"
             }}>
-              <button 
-                type="button"
-                onClick={() => setReaderResource(null)}
-                className="btn"
-                style={{ padding: "0.4rem 1.25rem" }}
-              >
+              <button type="button" onClick={() => setReaderResource(null)} className="btn" style={{ padding: "0.45rem 1.25rem" }}>
                 Close
               </button>
             </div>

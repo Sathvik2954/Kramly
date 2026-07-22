@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 import logging
 
 from .models import MarketplaceResource, Recommendation
-from .recommendation_service import RecommendationService
+from .discovery import RecommendationService
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ def get_recommendation_service() -> RecommendationService:
     raise NotImplementedError("Dependency not overridden in main application.")
 
 def get_resource_by_id_func():
-    """Dependency stub for fetching a single resource from Person A's storage."""
+    """Dependency stub for fetching a single resource from storage."""
     raise NotImplementedError("Dependency not overridden in main application.")
 
 def get_resources_by_author_func():
@@ -40,7 +40,7 @@ async def register_resource(
 ):
     """
     Registers a newly ingested resource into the marketplace.
-    Assumes that Person A's file storage and graph ingestion have already completed.
+    Assumes file storage and graph ingestion have already completed.
     This endpoint serves to broadcast its availability to the marketplace layer.
     """
     logger.info(f"Registering resource {resource.resource_id} into marketplace.")

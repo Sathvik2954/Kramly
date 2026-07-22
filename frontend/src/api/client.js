@@ -5,6 +5,7 @@
  * API contract (confirmed against models/request.py and models/response.py):
  *   POST /learning-path        → { known_skills, target_skill } → { path: string[] }
  *   GET  /decision-log/:id     → DecisionLogEntry[]
+ *   GET  /agentic-decision-log/:id → AgenticDecision[] (observe-reason-act trace)
  *   GET  /graph                → { nodes: [{id, name, domain}], links: [{source, target}] }
  *   GET  /learner/:id          → { learner_id, target_skill, deadline, known_skills }
  *   POST /learner/:id/evidence → { skill_id, confidence } → { status, message }
@@ -25,8 +26,6 @@ export async function fetchLearningPath({ learnerId, knownSkills, targetSkill })
   });
 
   if (!response.ok) {
-    // ASSUMPTION FLAG: error shape based on your described 404/409 mapping
-    // in routes.py — actual error body format not confirmed.
     const errorBody = await response.json().catch(() => ({}));
     throw new Error(errorBody.detail || errorBody.message || `Request failed with status ${response.status}`);
   }
@@ -42,11 +41,27 @@ export async function fetchDecisionLogHistory(learnerId) {
   return response.json();
 }
 
+export async function fetchAgenticDecisionLog(learnerId) {
+  const response = await fetch(`${API_BASE_URL}/agentic-decision-log/${learnerId}`);
+  if (!response.ok) {
+    throw new Error(`Agentic decision log request failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function fetchSkillGraph(domain) {
   const url = domain ? `${API_BASE_URL}/graph?domain=${domain}` : `${API_BASE_URL}/graph`;
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Graph fetch failed with status ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function fetchDomains() {
+  const response = await fetch(`${API_BASE_URL}/domains`);
+  if (!response.ok) {
+    throw new Error(`Domain list fetch failed with status ${response.status}`);
   }
   return response.json();
 }

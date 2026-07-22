@@ -16,17 +16,17 @@ Direction: `(prerequisite_skill)-[:PREREQUISITE_OF]->(dependent_skill)`
 | Field | Type | Notes |
 |---|---|---|
 | strength | string | "strict" (mandatory) or "soft" (helpful, not required) |
-| source | string | "manual" (Phase 1) or "extracted" (Phase 3, LLM-proposed) |
+| source | string | "manual" (hand-authored) or "extracted" (LLM-proposed via graph/extraction/pipeline.py) |
 
-## Node: Learner (added when Phase 1 API work begins)
+## Node: Learner
 | Field | Type | Notes |
 |---|---|---|
 | id | string | |
-| known_skills | list | with confidence/decay metadata (Phase 2) |
+| known_skills | list | with confidence/decay metadata |
 | target_skill | string | |
 | deadline | date | optional |
 
-## Validation checklist before handing this off to Person B
-- [ ] No cycles in PREREQUISITE_OF edges (run `check_for_cycles` in load_graph.py)
+## Validation checklist
+- [ ] No cycles in PREREQUISITE_OF edges (run `check_for_cycles` in load_all_domains.py)
 - [ ] Every `from_skill_id`/`to_skill_id` in prerequisites.csv exists in skills.csv
 - [ ] Manually inspected in Neo4j Browser: `MATCH (s:Skill)-[r:PREREQUISITE_OF]->(t:Skill) RETURN s, r, t`

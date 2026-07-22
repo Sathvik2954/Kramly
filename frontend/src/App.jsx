@@ -1,12 +1,21 @@
 import { useState, useEffect } from "react";
-import LearnerForm from "./components/LearnerForm";
-import PathResult from "./components/PathResult";
-import GraphVisualization from "./components/GraphVisualization";
-import DecisionLogHistory from "./components/DecisionLogHistory";
-import LearnerConfigForm from "./components/LearnerConfigForm";
-import MarketplacePanel from "./components/MarketplacePanel";
+import { Routes, Route } from "react-router-dom";
+import Nav from "./components/Nav";
+import HomePage from "./pages/HomePage";
+import LearningPathPage from "./pages/LearningPathPage";
+import MarketplacePage from "./pages/MarketplacePage";
+import AuditLogPage from "./pages/AuditLogPage";
+import SkillGraphPage from "./pages/SkillGraphPage";
 import { fetchLearningPath, fetchSkillGraph, fetchLearnerState } from "./api/client";
 
+/**
+ * App.jsx
+ * Site shell: header, nav, and the route table. Learner/path state is
+ * lifted here (not per-page) because it's shared across Learning Path,
+ * Audit Log, and Marketplace pages — e.g. the audit log needs to know
+ * which learner is currently active even though that learner was set on
+ * a different page.
+ */
 export default function App() {
   const [path, setPath] = useState(null);
   const [error, setError] = useState(null);
@@ -14,11 +23,14 @@ export default function App() {
   const [currentLearnerId, setCurrentLearnerId] = useState("");
   const [decayedSkills, setDecayedSkills] = useState([]);
 
+  // Full, all-domain skill list — lightweight metadata only (id/name/domain),
+  // used for dropdown labels and name lookups across pages. NOT the same
+  // thing as the Skill Graph page's visualization data, which is fetched
+  // separately and scoped to one domain at a time.
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [graphError, setGraphError] = useState(null);
   const [graphLoading, setGraphLoading] = useState(true);
 
-  // Load graph on mount
   useEffect(() => {
     loadGraph();
   }, []);
@@ -36,7 +48,6 @@ export default function App() {
     }
   }
 
-  // Reload learner path & log histories
   async function handleActionTriggered() {
     if (!currentLearnerId) return;
     setLoading(true);
@@ -75,7 +86,7 @@ export default function App() {
     try {
       const result = await fetchLearningPath({ learnerId, knownSkills, targetSkill });
       setPath(result.path || []);
-      
+
       const state = await fetchLearnerState(learnerId);
       if (state) {
         setDecayedSkills(state.decayed_skills || []);
@@ -95,59 +106,37 @@ export default function App() {
     <div className="app-container">
       <header className="app-header">
         <h1>
-          Kramly <span className="badge">v0.1.0</span>
+          Kramly <span className="version-badge">v0.1.0</span>
         </h1>
         <p className="app-description">
-          An adaptive learning path optimizer powered by a knowledge dependency graph.
+          Adaptive learning path optimizer. An LLM-driven agent computes the
+          fastest route from what you know to what you want to learn.
         </p>
       </header>
+      <div className="texture-strip" />
+      <Nav />
 
-      <div className="dashboard-grid">
-        <div className="dashboard-col">
-          <section className="card">
-            <h2>Optimize Path</h2>
-            <LearnerForm onSubmit={handleSubmit} loading={loading} />
-          </section>
-
-          <section className="card">
-            <h2>Learning Path</h2>
-            <PathResult path={path} error={error} graphData={graphData} decayedSkills={decayedSkills} />
-          </section>
-
-          <section className="card">
-            <h2>Study Notes Marketplace</h2>
-            <MarketplacePanel graphData={graphData} />
-          </section>
-        </div>
-
-        <div className="dashboard-col">
-          <section className="card">
-            <h2>Evidence & Target Config</h2>
-            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "1rem" }}>
-              {currentLearnerId 
-                ? `Recording updates for active learner: "${currentLearnerId}"`
-                : "Generate a path first to unlock target and evidence submissions."}
-            </p>
-            <LearnerConfigForm 
-              learnerId={currentLearnerId} 
-              onAction={handleActionTriggered} 
-              loading={loading} 
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route
+          path="/learning-path"
+          element={
+            <LearningPathPage
+              path={path}
+              error={error}
+              loading={loading}
+              currentLearnerId={currentLearnerId}
+              decayedSkills={decayedSkills}
+              graphData={graphData}
+              onSubmit={handleSubmit}
+              onAction={handleActionTriggered}
             />
-          </section>
-
-          <section className="card">
-            <h2>Decision Audit Log</h2>
-            <DecisionLogHistory learnerId={currentLearnerId} />
-          </section>
-        </div>
-      </div>
-
-      <section style={{ marginTop: "2.5rem" }}>
-        <h2>Skill Dependency Network</h2>
-        <div className="graph-container">
-          <GraphVisualization graphData={graphData} error={graphError} loading={graphLoading} />
-        </div>
-      </section>
+          }
+        />
+        <Route path="/marketplace" element={<MarketplacePage graphData={graphData} />} />
+        <Route path="/audit-log" element={<AuditLogPage currentLearnerId={currentLearnerId} />} />
+        <Route path="/skill-graph" element={<SkillGraphPage />} />
+      </Routes>
     </div>
   );
 }

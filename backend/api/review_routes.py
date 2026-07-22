@@ -7,7 +7,7 @@ Design decisions
 ~~~~~~~~~~~~~~~~
 1. **Thin Glue Layer**:
    Like `routes.py`, this file contains no business logic. It simply parses HTTP 
-   requests, delegates to the `review_service` or `merge_service`, and maps 
+   requests, delegates to the `review.service` module, and maps 
    internal `ValueErrors` to HTTP 400/404/409 codes.
 2. **Dependency Injection**:
    The `/merge` endpoint injects `graph_service.get_all_prerequisites_recursive` 
@@ -27,8 +27,9 @@ from fastapi import APIRouter, HTTPException
 from app.database import get_driver
 from app import graph_service
 from review.models import CandidateEdge, ReviewDecision, MergeResult, CandidateStatus
-from review import review_service, merge_service
-from review.audit_logger import log_audit_action, AuditLogEntry
+from review import service as review_service
+from review import service as merge_service
+from review.service import log_audit_action, AuditLogEntry
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ def _insert_edge_to_neo4j(
 
 @router.post("/candidate", response_model=CandidateEdge, summary="Submit an AI candidate edge for review")
 async def submit_candidate(candidate: CandidateEdge):
-    """Person A's LLM pipeline posts new candidate edges here."""
+    """The LLM extraction pipeline posts new candidate edges here."""
     try:
         saved = review_service.submit_candidate(candidate)
         
