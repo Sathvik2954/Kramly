@@ -117,17 +117,17 @@ def record_agentic_decision_entry(tx, learner_id: str, entry: dict):
     and what executing it actually produced - not just a path diff.
     """
     query = """
-    MERGE (l:Learner {id: })
+    MERGE (l:Learner {id: $learner_id})
     CREATE (d:AgenticDecision {
-        timestamp: ,
-        observed_decayed_skills: ,
-        observed_stuck_skills: ,
-        observed_stale_evidence_skills: ,
-        action_type: ,
-        skill_id: ,
-        justification: ,
-        source: ,
-        outcome: 
+        timestamp: $timestamp,
+        observed_decayed_skills: $observed_decayed_skills,
+        observed_stuck_skills: $observed_stuck_skills,
+        observed_stale_evidence_skills: $observed_stale_evidence_skills,
+        action_type: $action_type,
+        skill_id: $skill_id,
+        justification: $justification,
+        source: $source,
+        outcome: $outcome
     })
     MERGE (l)-[:HAD_AGENTIC_DECISION]->(d)
     """
@@ -152,7 +152,7 @@ def fetch_agentic_decision_log(tx, learner_id: str) -> list[dict]:
     mirrors fetch_decision_log's ordering contract above.
     """
     query = """
-    MATCH (l:Learner {id: })-[:HAD_AGENTIC_DECISION]->(d:AgenticDecision)
+    MATCH (l:Learner {id: $learner_id})-[:HAD_AGENTIC_DECISION]->(d:AgenticDecision)
     RETURN d.timestamp AS timestamp,
            d.observed_decayed_skills AS observed_decayed_skills,
            d.observed_stuck_skills AS observed_stuck_skills,
